@@ -1,0 +1,7 @@
+{
+  "name": "MT Technology - DealerAI",
+  "description": "Internal tool for comparing utility bills against Technical Commercial Conditions (CTE).",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
