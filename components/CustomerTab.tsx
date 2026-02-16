@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Customer, User, Segment, Opportunity, CommodityDetails, ExtractedBill, Property } from '../types';
 import * as API from '../services/mockApi';
 import { Container } from './ui/Layouts';
-import { User as UserIcon, Building2, Search, MapPin, Calendar, Wallet, Zap, Flame, Home, Plus, X, UploadCloud, Loader2, ArrowUpRight, Edit, Save, Calculator, Wand2, History, TrendingDown, PiggyBank, AlertCircle, ArrowLeftRight, ArrowRight, Trash2 } from 'lucide-react';
+import { User as UserIcon, Building2, Search, MapPin, Calendar, Wallet, Zap, Flame, Home, Plus, X, UploadCloud, Loader2, ArrowUpRight, Edit, Save, Calculator, Wand2, History, TrendingDown, PiggyBank, AlertCircle, ArrowLeftRight, ArrowRight, Trash2, FileText, Camera } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface Props {
@@ -22,6 +22,7 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
   // Upload State
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   
   // Ambiguous Property State for Upload
   const [ambiguousState, setAmbiguousState] = useState<{
@@ -62,45 +63,55 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
     fetchCustomers();
   }, [user.agency_id]);
 
-  const handleBillUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setIsUploading(true);
-      try {
-        const file = e.target.files[0];
-        const result = await API.analyze_bill(file, user);
-        
-        if (result.status === 'CONFLICT_EXISTING_OWNER') {
-            setConflictState({
-                extractedData: result.extracted_data,
-                conflictOwner: result.conflict_owner!,
-                conflictProperty: result.conflict_property!
-            });
-            setShowUploadModal(false);
-            return;
-        }
-
-        if (result.status === 'AMBIGUOUS_PROPERTY') {
-            setAmbiguousState({
-                extractedData: result.extracted_data,
-                existingCustomerId: result.existing_customer_id!,
-                existingProperties: result.existing_properties!
-            });
-            setShowUploadModal(false);
-            return;
-        }
-
-        // Success Path
-        await fetchCustomers();
-        setShowUploadModal(false);
-        setSearch(result.customer_data!.fiscal_code);
-        alert(`Analisi completata! Cliente: ${result.customer_data!.last_name || result.customer_data!.company_name}`);
-      } catch (err) {
-        console.error(err);
-        alert("Errore durante l'analisi della bolletta.");
-      } finally {
-        setIsUploading(false);
-        e.target.value = ''; 
+  const handleFileSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files.length > 0) {
+          const newFiles = Array.from(e.target.files);
+          setSelectedFiles(prev => [...prev, ...newFiles]);
       }
+  };
+
+  const removeFile = (index: number) => {
+      setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAnalyze = async () => {
+    if (selectedFiles.length === 0) return;
+    
+    setIsUploading(true);
+    try {
+      const result = await API.analyze_bill(selectedFiles, user);
+      
+      if (result.status === 'CONFLICT_EXISTING_OWNER') {
+          setConflictState({
+              extractedData: result.extracted_data,
+              conflictOwner: result.conflict_owner!,
+              conflictProperty: result.conflict_property!
+          });
+          setShowUploadModal(false);
+          return;
+      }
+
+      if (result.status === 'AMBIGUOUS_PROPERTY') {
+          setAmbiguousState({
+              extractedData: result.extracted_data,
+              existingCustomerId: result.existing_customer_id!,
+              existingProperties: result.existing_properties!
+          });
+          setShowUploadModal(false);
+          return;
+      }
+
+      // Success Path
+      await fetchCustomers();
+      setShowUploadModal(false);
+      setSelectedFiles([]);
+      setSearch(result.customer_data!.fiscal_code);
+      alert(`Analisi completata! Cliente: ${result.customer_data!.last_name || result.customer_data!.company_name}`);
+    } catch (err) {
+      console.error(err);
+      alert("Errore durante l'analisi dei documenti.");
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -214,7 +225,7 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
         </div>
         
         <button 
-          onClick={() => setShowUploadModal(true)}
+          onClick={() => { setShowUploadModal(true); setSelectedFiles([]); }}
           className="bg-brand-primary hover:bg-brand-dark text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-transform hover:-translate-y-0.5"
         >
             <Plus className="w-5 h-5" />
@@ -450,39 +461,71 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="bg-brand-primary p-4 flex justify-between items-center text-white">
-                    <h3 className="font-bold text-lg">Nuovo Cliente da Bolletta</h3>
+                    <h3 className="font-bold text-lg">Nuovo Cliente da Foto</h3>
                     <button onClick={() => setShowUploadModal(false)}><X className="w-5 h-5" /></button>
                 </div>
                 
                 <div className="p-6">
-                    <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-brand-accent transition-colors bg-gray-50 relative group">
+                    <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-brand-accent transition-colors bg-gray-50 relative group mb-4">
                         <input 
                             type="file" 
                             accept="image/*,application/pdf"
-                            onChange={handleBillUpload}
+                            onChange={handleFileSelection}
+                            multiple
                             disabled={isUploading}
                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         />
                         <div className="flex flex-col items-center gap-2 pointer-events-none">
                             {isUploading ? (
-                                <>
-                                    <Loader2 className="w-10 h-10 text-brand-accent animate-spin mb-2" />
-                                    <span className="text-gray-600 font-bold">Analisi AI in corso...</span>
-                                </>
+                                <Loader2 className="w-10 h-10 text-brand-accent animate-spin mb-2" />
                             ) : (
-                                <>
-                                    <UploadCloud className="w-10 h-10 text-gray-400 mb-2" />
-                                    <span className="text-gray-600 font-medium">Clicca per caricare PDF o Foto</span>
-                                </>
+                                <Camera className="w-10 h-10 text-gray-400 mb-2" />
                             )}
+                            <span className="text-gray-600 font-medium">Scatta Foto o Carica PDF</span>
+                            <span className="text-xs text-gray-400">(Fronte/Retro Carta d'Identità + Bollette)</span>
                         </div>
                     </div>
+
+                    {selectedFiles.length > 0 && (
+                        <div className="mb-4">
+                            <h4 className="text-sm font-bold text-gray-700 mb-2">Documenti selezionati ({selectedFiles.length}):</h4>
+                            <div className="space-y-2 max-h-40 overflow-y-auto">
+                                {selectedFiles.map((file, idx) => (
+                                    <div key={idx} className="flex justify-between items-center p-2 bg-gray-50 rounded text-sm border border-gray-200">
+                                        <div className="flex items-center gap-2 truncate">
+                                            <FileText className="w-4 h-4 text-brand-primary"/>
+                                            <span className="truncate max-w-[200px]">{file.name}</span>
+                                        </div>
+                                        <button onClick={() => removeFile(idx)} className="text-red-500 hover:bg-red-100 p-1 rounded">
+                                            <X className="w-4 h-4"/>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <button 
+                        onClick={handleAnalyze}
+                        disabled={selectedFiles.length === 0 || isUploading}
+                        className="w-full py-3 bg-brand-primary disabled:bg-gray-300 text-white font-bold rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all"
+                    >
+                        {isUploading ? (
+                            <>
+                                <Loader2 className="w-5 h-5 animate-spin" /> Analisi con IA in corso...
+                            </>
+                        ) : (
+                            <>
+                                <Wand2 className="w-5 h-5" /> Avvia Analisi con IA
+                            </>
+                        )}
+                    </button>
                 </div>
             </div>
         </div>
       )}
 
-      {/* AMBIGUOUS PROPERTY MODAL */}
+      {/* AMBIGUOUS & CONFLICT MODALS (Same as before) */}
       {ambiguousState && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
@@ -519,7 +562,6 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
         </div>
       )}
 
-      {/* CONFLICT MODAL */}
       {conflictState && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 border-2 border-orange-500">

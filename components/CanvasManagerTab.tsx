@@ -164,12 +164,12 @@ const CanvasManagerTab: React.FC<Props> = ({ user }) => {
            <p className="text-sm text-gray-500">Gestione Listino per Gestore</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-            {/* URL & Upload Buttons (Same as before) */}
+            {/* URL & Upload Buttons */}
             <div className="flex items-center gap-1 bg-white border border-gray-300 rounded-lg p-1 shadow-sm">
                 <input 
                     type="text" 
                     placeholder="URL PDF/IMG..." 
-                    className="text-xs p-1 outline-none w-24 md:w-32"
+                    className="text-xs p-1 outline-none w-32"
                     value={urlInput}
                     onChange={e => setUrlInput(e.target.value)}
                 />
@@ -183,7 +183,7 @@ const CanvasManagerTab: React.FC<Props> = ({ user }) => {
                 </button>
                 <input type="file" accept="application/pdf,image/*" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleUploadCanvas} disabled={isUploading} />
             </div>
-            <div className="w-px h-8 bg-gray-300 mx-1 hidden md:block"></div>
+            <div className="w-px h-8 bg-gray-300 mx-1"></div>
             <button onClick={() => setIsAddingOperator(true)} className="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg font-bold flex items-center gap-2 text-xs uppercase">
                 <Building2 className="w-4 h-4"/> Gestore
             </button>

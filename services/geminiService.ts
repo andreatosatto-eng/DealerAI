@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { CTE, Segment, Commodity, OfferType, IndexType, ExtractedBill, CanvasOffer, ExtractedTelephonyBill } from "../types";
+import { CTE, Segment, Commodity, OfferType, IndexType, ExtractedBill, CanvasOffer, ExtractedTelephonyBill, IndicesResponse } from "../types";
 
 // Initialize Gemini
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -48,8 +48,101 @@ const urlToPart = async (url: string): Promise<{ inlineData: { data: string; mim
 };
 
 const cleanJson = (text: string | undefined): string => {
-    if (!text) return "";
+    if (!text) return "{}";
     return text.replace(/```json/g, '').replace(/```/g, '').trim();
+};
+
+// --- MARKET DATA RETRIEVAL (LIVE SEARCH) ---
+export const retrieveMarketData = async (): Promise<IndicesResponse> => {
+  const model = "gemini-3-flash-preview";
+  
+  // Step 1: Search the web for latest data
+  // We explicitly ask for a table to get structured text
+  const searchPrompt = `
+    Cerca e restituisci una tabella con i valori consuntivi mensili degli indici energetici in Italia (PUN e PSV) per gli ultimi 15 mesi (fino al mese corrente o precedente disponibile).
+    
+    Dati richiesti:
+    1. Mese e Anno
+    2. PUN (Prezzo Unico Nazionale) medio mensile in €/kWh (se trovi €/MWh converti dividendo per 1000).
+    3. PUN diviso per fasce orarie: F1, F2, F3.
+    4. PSV (Punto di Scambio Virtuale) medio mensile in €/Smc.
+    
+    Fonti prioritarie: mercatonelettrico.org (GME), a2a.it, arera.it.
+    Se mancano i dati del mese corrente, usa l'ultimo disponibile.
+  `;
+  
+  const searchResp = await ai.models.generateContent({
+    model,
+    contents: searchPrompt,
+    config: { tools: [{googleSearch: {}}] }
+  });
+  
+  const searchContext = searchResp.text;
+  
+  // Step 2: Extract structured JSON from the search result
+  const extractionPrompt = `
+    Analyze the text below containing market data found via search.
+    Extract the monthly values into the specified JSON format.
+    
+    Rules:
+    - Values must be numbers (e.g., 0.1234).
+    - Convert €/MWh to €/kWh (e.g. 100 €/MWh -> 0.100 €/kWh).
+    - If F23 is missing in the source, calculate it: (F2 + F3) / 2.
+    - PSV must be in €/Smc.
+    - Return at least 12 months if available.
+    - Sort chronologically (oldest to newest).
+
+    Source Text:
+    ${searchContext}
+  `;
+  
+  const extractResp = await ai.models.generateContent({
+    model,
+    contents: extractionPrompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          pun: { 
+            type: Type.ARRAY, 
+            items: { 
+              type: Type.OBJECT, 
+              properties: {
+                 month: { type: Type.STRING, description: "YYYY-MM" },
+                 value: { type: Type.NUMBER },
+                 f1: { type: Type.NUMBER },
+                 f2: { type: Type.NUMBER },
+                 f3: { type: Type.NUMBER },
+                 f23: { type: Type.NUMBER },
+              },
+              required: ["month", "value"]
+            }
+          },
+          psv: { 
+            type: Type.ARRAY, 
+            items: { 
+              type: Type.OBJECT, 
+              properties: {
+                 month: { type: Type.STRING, description: "YYYY-MM" },
+                 value: { type: Type.NUMBER }
+              },
+              required: ["month", "value"]
+            }
+          }
+        }
+      }
+    }
+  });
+
+  const jsonText = cleanJson(extractResp.text);
+  const data = JSON.parse(jsonText);
+  
+  return {
+      updated_at: new Date().toISOString(),
+      pun: data.pun || [],
+      psv: data.psv || []
+  };
 };
 
 // --- CTE Extraction ---
@@ -119,17 +212,31 @@ export const extractCteFromPdf = async (file: File): Promise<Partial<CTE>> => {
   };
 };
 
-// --- Bill & ID Card Extraction ---
-export const extractBillData = async (file: File): Promise<ExtractedBill & { document_type: 'BILL' | 'ID_CARD' }> => {
+// --- Bill & ID Card Extraction (Multi-File Support) ---
+export const extractBillData = async (files: File[]): Promise<ExtractedBill & { document_type: 'BILL' | 'ID_CARD' }> => {
   const model = "gemini-3-flash-preview";
-  const filePart = await fileToPart(file);
+  
+  // Convert all files to parts
+  const fileParts = await Promise.all(files.map(fileToPart));
 
   const prompt = `
-    Analyze this document. It could be a Utility Bill OR an Identity Card (Carta d'Identità).
+    Analyze these documents. They could be Utility Bills, Identity Cards (Carta d'Identità - Front/Back), or a mix.
+    Combine information from all images to get the most complete data.
     
-    1. Determine document_type: 'BILL' or 'ID_CARD'.
-    2. Extract Fiscal Code (Codice Fiscale) accurately. It is crucial.
+    1. Determine main document_type: 'BILL' (if any energy bill is present) or 'ID_CARD' (if only ID/personal docs).
+    2. Extract Fiscal Code (Codice Fiscale/Partita IVA) accurately. It is crucial. Check all pages.
     3. Extract Client Name (First + Last Name or Company Name).
+    
+    CRITICAL: Determine the Customer Type ('COMPANY' or 'PERSON').
+    - It is a COMPANY if:
+      a) A 'P.IVA' or 'Partita IVA' is present anywhere near the address or client data.
+      b) The offer name contains "Business", "Azienda", "Impresa", or "Microbusiness" (e.g. "Smart Business").
+      c) The client name contains "S.p.A.", "S.r.l.", "S.n.c.", "S.a.s.", "Ditta", "Società".
+      d) The fiscal identifier found is strictly an 11-digit number (numeric Partita IVA).
+    - It is a PERSON only if:
+      a) The fiscal identifier is a 16-character alphanumeric code (Codice Fiscale Persona Fisica).
+      b) No P.IVA or Business keywords are found.
+
     4. Extract Address. 
        - If ID CARD: This is the residence address.
        - If BILL: This is the supply address.
@@ -137,7 +244,7 @@ export const extractBillData = async (file: File): Promise<ExtractedBill & { doc
     IF BILL:
     - Extract POD/PDR, Commodity, Supplier, Consumption, Costs.
     
-    IF ID CARD:
+    IF ID CARD (and no bill):
     - Set 'is_resident' to true.
     - Set 'commodity' to 'luce' (default placeholder).
     - Leave consumption/costs as 0 or null.
@@ -146,7 +253,7 @@ export const extractBillData = async (file: File): Promise<ExtractedBill & { doc
   const response = await ai.models.generateContent({
     model: model,
     contents: {
-        parts: [filePart, { text: prompt }]
+        parts: [...fileParts, { text: prompt }]
     },
     config: {
       responseMimeType: "application/json",
@@ -154,6 +261,7 @@ export const extractBillData = async (file: File): Promise<ExtractedBill & { doc
         type: Type.OBJECT,
         properties: {
           document_type: { type: Type.STRING, enum: ['BILL', 'ID_CARD'] },
+          customer_type: { type: Type.STRING, enum: ['COMPANY', 'PERSON'], description: "Classify based on P.IVA presence and Business keywords." },
           fiscal_code: { type: Type.STRING },
           client_name: { type: Type.STRING },
           address: { type: Type.STRING },
@@ -170,13 +278,14 @@ export const extractBillData = async (file: File): Promise<ExtractedBill & { doc
           consumption_f3: { type: Type.NUMBER, nullable: true },
           detected_unit_price: { type: Type.NUMBER, nullable: true },
           detected_fixed_fee: { type: Type.NUMBER, nullable: true }
-        }
+        },
+        required: ['document_type', 'fiscal_code', 'client_name', 'customer_type', 'address']
       }
     }
   });
 
   const text = cleanJson(response.text);
-  if (!text) throw new Error("No data returned from Gemini");
+  if (!text || text === '{}') throw new Error("No data returned from Gemini");
 
   const data = JSON.parse(text);
 

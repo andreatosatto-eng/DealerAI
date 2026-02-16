@@ -1,7 +1,7 @@
 import React from 'react';
 
 export const Container: React.FC<{ children: React.ReactNode, className?: string }> = ({ children, className = "" }) => (
-  <div className={`p-4 max-w-4xl mx-auto w-full ${className}`}>
+  <div className={`p-8 max-w-[1600px] mx-auto w-full ${className}`}>
     {children}
   </div>
 );

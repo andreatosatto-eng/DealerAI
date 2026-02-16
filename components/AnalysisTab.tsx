@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Camera, FileText, Upload, AlertCircle, CheckCircle, XCircle, ArrowRight, Download, RefreshCw, CheckSquare, Square, ChevronDown, User as UserIcon, Building2, MapPin, Plus, Home, ArrowLeftRight } from 'lucide-react';
+import { Camera, FileText, Upload, AlertCircle, CheckCircle, XCircle, ArrowRight, Download, RefreshCw, CheckSquare, Square, ChevronDown, User as UserIcon, Building2, MapPin, Plus, Home, ArrowLeftRight, Loader2, X } from 'lucide-react';
 import { Segment, ExtractedBill, CTE, IndicesResponse, ComparisonResult, OfferType, User, Customer, Property } from '../types';
 import * as API from '../services/mockApi';
 import { Container, Section } from './ui/Layouts';
@@ -13,7 +13,7 @@ interface Props {
 const AnalysisTab: React.FC<Props> = ({ indices, user }) => {
   const [step, setStep] = useState<number>(1);
   const [segment, setSegment] = useState<Segment | ''>('');
-  const [file, setFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -75,11 +75,16 @@ const AnalysisTab: React.FC<Props> = ({ indices, user }) => {
     }
   }, [calculationMode, manualConsumption]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setError(null);
+  const handleFileSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+        const newFiles = Array.from(e.target.files);
+        setSelectedFiles(prev => [...prev, ...newFiles]);
+        setError(null);
     }
+  };
+
+  const removeFile = (index: number) => {
+      setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const toggleCteSelection = (id: string) => {
@@ -89,14 +94,13 @@ const AnalysisTab: React.FC<Props> = ({ indices, user }) => {
   };
 
   const startAnalysis = async () => {
-    if (!segment || !file || selectedCteIds.length === 0 || !indices) return;
+    if (!segment || selectedFiles.length === 0 || selectedCteIds.length === 0 || !indices) return;
     
     setLoading(true);
     setStep(2); 
     
     try {
-      // Fix: analyze_bill only takes file and user
-      const result = await API.analyze_bill(file, user);
+      const result = await API.analyze_bill(selectedFiles, user);
       
       if (result.status === 'AMBIGUOUS_PROPERTY') {
           setAmbiguousState({
@@ -235,7 +239,7 @@ const AnalysisTab: React.FC<Props> = ({ indices, user }) => {
   };
 
   const reset = () => {
-    setFile(null);
+    setSelectedFiles([]);
     setStep(1);
     setComparisons([]);
     setExtractedData(null);
@@ -487,17 +491,38 @@ const AnalysisTab: React.FC<Props> = ({ indices, user }) => {
               )}
               {!error && selectedCteIds.length > 0 && (
                 <div className="mt-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">3. Carica Bolletta</label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-brand-accent transition-colors bg-gray-50 relative group">
-                    <input type="file" accept="image/*,application/pdf" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                  <label className="block text-sm font-medium text-gray-700 mb-2">3. Carica Bolletta / Documenti</label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-brand-accent transition-colors bg-gray-50 relative group mb-4">
+                    <input type="file" multiple accept="image/*,application/pdf" onChange={handleFileSelection} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                     <div className="flex flex-col items-center gap-2 pointer-events-none">
-                      {file ? (<><FileText className="w-12 h-12 text-brand-accent" /><span className="font-semibold text-gray-900">{file.name}</span></>) : (<><Camera className="w-10 h-10 text-gray-400 mb-2" /><span className="text-gray-600 font-medium">Scatta foto o carica PDF</span></>)}
+                        <Camera className="w-10 h-10 text-gray-400 mb-2" />
+                        <span className="text-gray-600 font-medium">Scatta foto o carica PDF</span>
+                        <span className="text-xs text-gray-400">(Multi-selezione supportata)</span>
                     </div>
                   </div>
+
+                  {selectedFiles.length > 0 && (
+                      <div className="mb-4">
+                          <h4 className="text-sm font-bold text-gray-700 mb-2">File selezionati ({selectedFiles.length}):</h4>
+                          <div className="space-y-2 max-h-40 overflow-y-auto">
+                              {selectedFiles.map((file, idx) => (
+                                  <div key={idx} className="flex justify-between items-center p-2 bg-gray-50 rounded text-sm border border-gray-200">
+                                      <div className="flex items-center gap-2 truncate">
+                                          <FileText className="w-4 h-4 text-brand-primary"/>
+                                          <span className="truncate max-w-[200px]">{file.name}</span>
+                                      </div>
+                                      <button onClick={() => removeFile(idx)} className="text-red-500 hover:bg-red-100 p-1 rounded">
+                                          <X className="w-4 h-4"/>
+                                      </button>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  )}
                 </div>
               )}
               {!error && (
-                <button disabled={!file || selectedCteIds.length === 0} onClick={startAnalysis} className={`w-full py-4 rounded-lg font-bold text-white shadow-md flex items-center justify-center gap-2 transition-all mt-8 ${file && selectedCteIds.length > 0 ? 'bg-brand-accent hover:bg-teal-500 transform hover:-translate-y-1' : 'bg-gray-300 cursor-not-allowed'}`}>
+                <button disabled={selectedFiles.length === 0 || selectedCteIds.length === 0} onClick={startAnalysis} className={`w-full py-4 rounded-lg font-bold text-white shadow-md flex items-center justify-center gap-2 transition-all mt-8 ${selectedFiles.length > 0 && selectedCteIds.length > 0 ? 'bg-brand-accent hover:bg-teal-500 transform hover:-translate-y-1' : 'bg-gray-300 cursor-not-allowed'}`}>
                   <span>Confronta ({selectedCteIds.length}) Offerte</span><ArrowRight className="w-5 h-5" />
                 </button>
               )}

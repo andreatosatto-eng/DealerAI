@@ -30,11 +30,24 @@ export enum Sector {
   MANAGEMENT = 'management'
 }
 
+// --- HIERARCHY TYPES ---
+
+export type UserRole = 'SUPER_ADMIN' | 'AGENCY_ADMIN' | 'AGENT';
+
+export interface Branch {
+  id: string;
+  name: string;
+  address?: string;
+  city?: string;
+  is_main: boolean; // Sede Legale vs Filiale
+}
+
 export interface Agency {
   id: string;
   name: string;
   vat_number: string;
   created_at: string;
+  branches: Branch[]; // List of locations
 }
 
 export interface User {
@@ -43,7 +56,8 @@ export interface User {
   password?: string;
   full_name: string;
   agency_id: string;
-  role: 'ADMIN' | 'AGENT'; // ADMIN is SuperAdmin if agency_id is 'ag_mt', otherwise AgencyAdmin
+  branch_id?: string; // Optional: Links agent to specific office
+  role: UserRole;
   is_active: boolean;
 }
 
@@ -171,7 +185,11 @@ export interface Customer {
 
 export interface IndexData {
   month: string;
-  value: number;
+  value: number; // Average / F0
+  f1?: number;   // Peak
+  f2?: number;   // Mid
+  f3?: number;   // Off
+  f23?: number;  // Mid + Off Average
 }
 
 export interface IndicesResponse {
@@ -241,6 +259,7 @@ export interface CanvasOffer {
 
 export interface ExtractedBill {
   fiscal_code?: string;
+  customer_type?: 'COMPANY' | 'PERSON'; // Explicit type from AI
   client_name?: string;
   address?: string;
   city?: string;

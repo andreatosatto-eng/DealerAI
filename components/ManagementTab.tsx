@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Agency, AuditLog } from '../types';
+import { User, Agency, AuditLog, UserRole } from '../types';
 import * as API from '../services/mockApi';
 import { Container } from './ui/Layouts';
 import { 
     Plus, Building2, Users, Shield, UserPlus, Trash2, Edit, Save, X, Loader2, 
     CheckCircle2, Ban, Globe, CreditCard, History, Database, Download, Upload, 
-    AlertTriangle, Terminal, Search 
+    AlertTriangle, Terminal, Search, MapPin
 } from 'lucide-react';
 
 interface Props {
@@ -14,8 +14,11 @@ interface Props {
 }
 
 const ManagementTab: React.FC<Props> = ({ user }) => {
-  const isSuperAdmin = user.agency_id === 'ag_mt';
-  const [activeTab, setActiveTab] = useState<'AGENCIES' | 'USERS' | 'DATABASE' | 'AUDIT'>(isSuperAdmin ? 'AGENCIES' : 'USERS');
+  const isSuperAdmin = user.role === 'SUPER_ADMIN';
+  const isAgencyAdmin = user.role === 'AGENCY_ADMIN';
+
+  const [activeTab, setActiveTab] = useState<'AGENCIES' | 'BRANCHES' | 'USERS' | 'DATABASE' | 'AUDIT'>(isSuperAdmin ? 'AGENCIES' : 'USERS');
+  
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -25,6 +28,10 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
   const [showAgencyModal, setShowAgencyModal] = useState(false);
   const [newAgency, setNewAgency] = useState({ name: '', vat_number: '' });
 
+  // Create Branch Form
+  const [showBranchModal, setShowBranchModal] = useState(false);
+  const [newBranch, setNewBranch] = useState({ name: '', city: '' });
+
   // Create User Form
   const [showUserModal, setShowUserModal] = useState(false);
   const [newUser, setNewUser] = useState<Partial<User>>({ 
@@ -32,6 +39,7 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
       password: '', 
       full_name: '', 
       agency_id: isSuperAdmin ? '' : user.agency_id, 
+      branch_id: '',
       role: 'AGENT',
       is_active: true 
   });
@@ -62,13 +70,43 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
     fetchData();
   };
 
+  const handleCreateBranch = async () => {
+      if(!newBranch.name || !newBranch.city) return;
+      setLoading(true);
+      await API.add_branch_to_agency(user.agency_id, newBranch.name, newBranch.city);
+      setShowBranchModal(false);
+      setNewBranch({ name: '', city: ''});
+      fetchData();
+  };
+
   const handleCreateUser = async () => {
     if (!newUser.username || !newUser.password || (!isSuperAdmin && !newUser.agency_id)) return;
+    
+    // Safety check for UI
+    if (user.role === 'AGENCY_ADMIN' && newUser.role === 'SUPER_ADMIN') {
+        alert("Non puoi creare un Super Admin.");
+        return;
+    }
+
     setLoading(true);
-    await API.create_system_user(newUser as Omit<User, 'id'>, user);
-    setShowUserModal(false);
-    setNewUser({ username: '', password: '', full_name: '', agency_id: isSuperAdmin ? '' : user.agency_id, role: 'AGENT', is_active: true });
-    fetchData();
+    try {
+        await API.create_system_user(newUser as Omit<User, 'id'>, user);
+        setShowUserModal(false);
+        setNewUser({ 
+            username: '', 
+            password: '', 
+            full_name: '', 
+            agency_id: isSuperAdmin ? '' : user.agency_id, 
+            branch_id: '',
+            role: 'AGENT', 
+            is_active: true 
+        });
+        fetchData();
+    } catch(e: any) {
+        alert("Errore: " + e.message);
+    } finally {
+        setLoading(false);
+    }
   };
 
   const toggleUser = async (userId: string) => {
@@ -86,37 +124,21 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
       a.click();
   };
 
-  const handleImportDB = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (!isSuperAdmin) return;
-      if (e.target.files && e.target.files[0]) {
-          const reader = new FileReader();
-          reader.onload = async (event) => {
-              const content = event.target?.result as string;
-              const success = await API.db_import(content);
-              if (success) {
-                  alert("Database importato con successo!");
-                  window.location.reload();
-              } else {
-                  alert("Errore nell'importazione. File non valido o mancante di permessi SuperAdmin.");
-              }
-          };
-          reader.readAsText(e.target.files[0]);
-      }
-  };
+  const myAgency = agencies.find(a => a.id === user.agency_id);
+  const availableBranches = isSuperAdmin 
+     ? (newUser.agency_id ? agencies.find(a => a.id === newUser.agency_id)?.branches || [] : [])
+     : (myAgency?.branches || []);
 
   return (
     <Container>
       <div className="mb-8 flex justify-between items-end">
         <div>
             <h2 className="text-3xl font-black text-brand-primary">
-                {isSuperAdmin ? 'Gestione Sistema' : 'Gestione Agenzia'}
+                {isSuperAdmin ? 'Gestione Sistema' : 'Amministrazione Agenzia'}
             </h2>
             <p className="text-gray-500">
-                {isSuperAdmin ? 'Amministrazione Multi-Tenant Core' : `Amministrazione Team: ${agencies[0]?.name || '...'}`}
+                {isSuperAdmin ? 'Multi-Tenant Network Core' : `${myAgency?.name || '...'}`}
             </p>
-        </div>
-        <div className="hidden md:block">
-            <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">V1.3.0 SECURITY_PATCH</span>
         </div>
       </div>
 
@@ -127,26 +149,34 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                 onClick={() => setActiveTab('AGENCIES')}
                 className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'AGENCIES' ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-                <Building2 className="w-4 h-4"/> Rete Agenzie
+                <Globe className="w-4 h-4"/> Rete Agenzie
+            </button>
+        )}
+        {(isAgencyAdmin || isSuperAdmin) && (
+             <button 
+                onClick={() => setActiveTab('BRANCHES')}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'BRANCHES' ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+                <MapPin className="w-4 h-4"/> Sedi & Filiali
             </button>
         )}
         <button 
             onClick={() => setActiveTab('USERS')}
             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'USERS' ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
-            <Users className="w-4 h-4"/> {isSuperAdmin ? 'Tutti gli Utenti' : 'Membri Team'}
+            <Users className="w-4 h-4"/> {isSuperAdmin ? 'Tutti gli Utenti' : 'Staff & Agenti'}
         </button>
         <button 
             onClick={() => setActiveTab('AUDIT')}
             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'AUDIT' ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
-            <History className="w-4 h-4"/> Log Attività
+            <History className="w-4 h-4"/> Audit Log
         </button>
         <button 
             onClick={() => setActiveTab('DATABASE')}
             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'DATABASE' ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
-            <Database className="w-4 h-4"/> {isSuperAdmin ? 'Database' : 'Export Dati'}
+            <Database className="w-4 h-4"/> Dati
         </button>
       </div>
 
@@ -165,25 +195,67 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {agencies.map(ag => (
-                          <div key={ag.id} className="bg-gray-50 p-5 rounded-xl border border-gray-200">
+                          <div key={ag.id} className="bg-gray-50 p-5 rounded-xl border border-gray-200 hover:shadow-md transition-shadow">
                               <div className="flex justify-between items-start mb-3">
                                   <div className="bg-white p-2 rounded-lg shadow-sm"><Building2 className="w-6 h-6 text-brand-primary"/></div>
                                   <div className="text-[10px] bg-white border px-2 py-0.5 rounded font-bold text-gray-400">ID: {ag.id}</div>
                               </div>
                               <h4 className="font-bold text-gray-800 text-lg leading-tight mb-1">{ag.name}</h4>
-                              <div className="text-sm text-gray-500 flex items-center gap-2"><CreditCard className="w-4 h-4" /> {ag.vat_number}</div>
+                              <div className="text-sm text-gray-500 flex items-center gap-2 mb-2"><CreditCard className="w-4 h-4" /> {ag.vat_number}</div>
+                              <div className="pt-3 border-t border-gray-100 text-xs text-gray-400 flex justify-between">
+                                  <span>{ag.branches?.length || 0} Sedi</span>
+                                  <span>Creato: {new Date(ag.created_at).toLocaleDateString()}</span>
+                              </div>
                           </div>
                       ))}
                   </div>
               </div>
           )}
 
-          {/* 2. USERS (Scoped) */}
+          {/* 2. BRANCHES (Sedi) */}
+          {activeTab === 'BRANCHES' && (
+              <div className="p-6">
+                 <div className="flex justify-between items-center mb-6">
+                      <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
+                        <MapPin className="w-5 h-5 text-brand-accent"/> Sedi Operative
+                      </h3>
+                      {!isSuperAdmin && (
+                          <button onClick={() => setShowBranchModal(true)} className="bg-brand-primary text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm">
+                              <Plus className="w-4 h-4"/> Nuova Sede
+                          </button>
+                      )}
+                  </div>
+
+                  <div className="space-y-6">
+                      {(isSuperAdmin ? agencies : [myAgency]).filter(Boolean).map(ag => (
+                          <div key={ag!.id}>
+                              {isSuperAdmin && <h4 className="font-bold text-gray-500 text-xs uppercase mb-2">{ag!.name}</h4>}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  {ag!.branches?.map(br => (
+                                      <div key={br.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 flex justify-between items-center">
+                                          <div>
+                                              <div className="font-bold text-gray-800 flex items-center gap-2">
+                                                  {br.name}
+                                                  {br.is_main && <span className="bg-blue-100 text-blue-700 text-[9px] px-1.5 py-0.5 rounded uppercase">Sede Legale</span>}
+                                              </div>
+                                              <div className="text-sm text-gray-500">{br.city}</div>
+                                          </div>
+                                          <MapPin className="w-5 h-5 text-gray-300" />
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          )}
+
+          {/* 3. USERS (Scoped) */}
           {activeTab === 'USERS' && (
               <div className="p-6">
                   <div className="flex justify-between items-center mb-6">
                       <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
-                        <Shield className="w-5 h-5 text-brand-accent"/> {isSuperAdmin ? 'Gestione Account Rete' : 'Gestione Agenti'}
+                        <Shield className="w-5 h-5 text-brand-accent"/> {isSuperAdmin ? 'Gestione Account Rete' : 'Gestione Team'}
                       </h3>
                       <button onClick={() => setShowUserModal(true)} className="bg-brand-primary text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm">
                           <UserPlus className="w-4 h-4"/> {isSuperAdmin ? 'Nuovo Utente' : 'Aggiungi Agente'}
@@ -195,16 +267,21 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                               <tr>
                                   <th className="px-4 py-3">Utente</th>
                                   {isSuperAdmin && <th className="px-4 py-3">Agenzia</th>}
+                                  <th className="px-4 py-3">Sede</th>
                                   <th className="px-4 py-3">Ruolo</th>
                                   <th className="px-4 py-3 text-right">Stato</th>
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100 text-sm">
-                              {users.map(u => (
+                              {users.map(u => {
+                                  const userAgency = agencies.find(a => a.id === u.agency_id);
+                                  const userBranch = userAgency?.branches?.find(b => b.id === u.branch_id);
+
+                                  return (
                                   <tr key={u.id} className="hover:bg-gray-50 transition-all">
                                       <td className="px-4 py-3">
                                           <div className="flex items-center gap-3">
-                                              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${u.role === 'ADMIN' ? 'bg-brand-dark text-brand-accent' : 'bg-gray-200 text-gray-500'}`}>
+                                              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${u.role === 'SUPER_ADMIN' ? 'bg-brand-accent text-brand-dark' : 'bg-gray-200 text-gray-500'}`}>
                                                   {u.full_name.charAt(0)}
                                               </div>
                                               <div>
@@ -213,10 +290,15 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                                               </div>
                                           </div>
                                       </td>
-                                      {isSuperAdmin && <td className="px-4 py-3">{agencies.find(a => a.id === u.agency_id)?.name}</td>}
+                                      {isSuperAdmin && <td className="px-4 py-3">{userAgency?.name || 'N/D'}</td>}
+                                      <td className="px-4 py-3 text-xs text-gray-500">{userBranch?.name || '-'}</td>
                                       <td className="px-4 py-3">
-                                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${u.role === 'ADMIN' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                                              {u.role}
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                              u.role === 'SUPER_ADMIN' ? 'bg-purple-100 text-purple-700' :
+                                              u.role === 'AGENCY_ADMIN' ? 'bg-blue-100 text-blue-700' : 
+                                              'bg-green-100 text-green-700'
+                                          }`}>
+                                              {u.role.replace('_', ' ')}
                                           </span>
                                       </td>
                                       <td className="px-4 py-3 text-right">
@@ -229,7 +311,7 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                                           </button>
                                       </td>
                                   </tr>
-                              ))}
+                              )})}
                           </tbody>
                       </table>
                   </div>
@@ -253,7 +335,7 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                               <span className="text-white group-hover:text-brand-accent">{log.details}</span>
                           </div>
                       ))}
-                      {auditLogs.length === 0 && <div className="text-gray-600 italic">Nessun evento registrato per questa agenzia.</div>}
+                      {auditLogs.length === 0 && <div className="text-gray-600 italic">Nessun evento registrato.</div>}
                   </div>
               </div>
           )}
@@ -270,37 +352,8 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                           <h4 className="font-bold text-gray-700 mb-2 flex items-center gap-2">
                               <Download className="w-4 h-4 text-blue-500"/> {isSuperAdmin ? 'Esporta Backup Totale' : 'Esporta Clienti e Contratti'}
                           </h4>
-                          <p className="text-xs text-gray-500 mb-4">
-                              {isSuperAdmin 
-                                ? "Genera un file JSON completo di tutte le agenzie e i listini." 
-                                : "Scarica un backup cifrato dei tuoi clienti e delle anagrafiche inserite dai tuoi agenti."}
-                          </p>
                           <button onClick={handleExportDB} className="bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm w-full hover:bg-blue-700 transition-colors shadow-sm">Genera Archivio JSON</button>
                       </div>
-
-                      {isSuperAdmin && (
-                        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 shadow-sm">
-                            <h4 className="font-bold text-gray-700 mb-2 flex items-center gap-2">
-                                <Upload className="w-4 h-4 text-brand-accent"/> Ripristino Sistema
-                            </h4>
-                            <p className="text-xs text-gray-500 mb-4">Carica un file di backup per ripristinare l'intero database di rete.</p>
-                            <div className="relative">
-                                <input type="file" accept=".json" onChange={handleImportDB} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                                <button className="bg-brand-primary text-white px-4 py-2.5 rounded-xl font-bold text-sm w-full shadow-sm">Seleziona File di Backup</button>
-                            </div>
-                        </div>
-                      )}
-
-                      {!isSuperAdmin && (
-                          <div className="bg-brand-dark p-6 rounded-2xl text-white flex flex-col justify-center">
-                              <h4 className="font-bold text-brand-accent mb-2 flex items-center gap-2">
-                                  <Shield className="w-4 h-4"/> Security Note
-                              </h4>
-                              <p className="text-xs text-gray-400">
-                                  La tua agenzia opera in un'istanza dedicata. Nessun dato condiviso qui è visibile ad altre agenzie partner. Solo i tuoi ADMIN possono gestire gli AGENTI.
-                              </p>
-                          </div>
-                      )}
 
                       {isSuperAdmin && (
                         <div className="md:col-span-2 bg-red-50 p-6 rounded-2xl border border-red-100 flex items-start gap-4">
@@ -317,7 +370,7 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
           )}
       </div>
 
-      {/* Modals for creation (unchanged but context-aware select) */}
+      {/* Modals for creation */}
       {showAgencyModal && isSuperAdmin && (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md animate-in zoom-in-95">
@@ -328,13 +381,35 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                   <div className="space-y-4">
                       <div>
                           <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Ragione Sociale</label>
-                          <input placeholder="Es. Agenzia Rossi Srl" className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-brand-accent outline-none" onChange={e => setNewAgency({...newAgency, name: e.target.value})} />
+                          <input placeholder="Es. Agenzia Rossi Srl" className="w-full border p-3 rounded-xl" onChange={e => setNewAgency({...newAgency, name: e.target.value})} />
                       </div>
                       <div>
                           <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Partita IVA</label>
-                          <input placeholder="IT..." className="w-full border p-3 rounded-xl focus:ring-2 focus:ring-brand-accent outline-none" onChange={e => setNewAgency({...newAgency, vat_number: e.target.value})} />
+                          <input placeholder="IT..." className="w-full border p-3 rounded-xl" onChange={e => setNewAgency({...newAgency, vat_number: e.target.value})} />
                       </div>
                       <button onClick={handleCreateAgency} className="w-full py-3 bg-brand-primary text-white font-bold rounded-xl shadow-lg">Crea Agenzia Partner</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {showBranchModal && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md animate-in zoom-in-95">
+                  <div className="flex justify-between items-center mb-4 pb-2 border-b">
+                      <h3 className="font-bold text-xl">Nuova Sede Operativa</h3>
+                      <button onClick={() => setShowBranchModal(false)}><X className="w-6 h-6"/></button>
+                  </div>
+                  <div className="space-y-4">
+                      <div>
+                          <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Nome Sede (Es. Filiale Nord)</label>
+                          <input className="w-full border p-3 rounded-xl" onChange={e => setNewBranch({...newBranch, name: e.target.value})} />
+                      </div>
+                      <div>
+                          <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Città</label>
+                          <input className="w-full border p-3 rounded-xl" onChange={e => setNewBranch({...newBranch, city: e.target.value})} />
+                      </div>
+                      <button onClick={handleCreateBranch} className="w-full py-3 bg-brand-primary text-white font-bold rounded-xl shadow-lg">Aggiungi Sede</button>
                   </div>
               </div>
           </div>
@@ -344,7 +419,7 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md animate-in zoom-in-95">
                   <div className="flex justify-between items-center mb-4 pb-2 border-b">
-                      <h3 className="font-bold text-xl">{isSuperAdmin ? 'Nuovo Utente Sistema' : 'Aggiungi Agente'}</h3>
+                      <h3 className="font-bold text-xl">Nuovo Utente</h3>
                       <button onClick={() => setShowUserModal(false)}><X className="w-6 h-6"/></button>
                   </div>
                   <div className="space-y-4">
@@ -362,20 +437,33 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                             <input type="password" placeholder="••••••" className="w-full border p-3 rounded-xl" onChange={e => setNewUser({...newUser, password: e.target.value})} />
                         </div>
                       </div>
+                      
                       {isSuperAdmin && (
                         <div>
                             <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Assegna ad Agenzia</label>
-                            <select className="w-full border p-3 rounded-xl" onChange={e => setNewUser({...newUser, agency_id: e.target.value})}>
+                            <select className="w-full border p-3 rounded-xl" value={newUser.agency_id} onChange={e => setNewUser({...newUser, agency_id: e.target.value, branch_id: ''})}>
                                 <option value="">Seleziona...</option>
                                 {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                             </select>
                         </div>
                       )}
+                      
+                      {newUser.agency_id && (
+                          <div>
+                            <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Assegna a Sede (Opzionale)</label>
+                            <select className="w-full border p-3 rounded-xl" value={newUser.branch_id} onChange={e => setNewUser({...newUser, branch_id: e.target.value})}>
+                                <option value="">Nessuna (Operativo Ovunque)</option>
+                                {availableBranches.map(b => <option key={b.id} value={b.id}>{b.name} ({b.city})</option>)}
+                            </select>
+                          </div>
+                      )}
+
                       <div>
                           <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Ruolo</label>
-                          <select className="w-full border p-3 rounded-xl" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as any})}>
-                              <option value="AGENT">Agente (Vendite)</option>
-                              <option value="ADMIN">Amministratore (Gestione)</option>
+                          <select className="w-full border p-3 rounded-xl" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})}>
+                              <option value="AGENT">Agente (Operativo)</option>
+                              <option value="AGENCY_ADMIN">Admin Agenzia</option>
+                              {isSuperAdmin && <option value="SUPER_ADMIN">SUPER ADMIN (Globale)</option>}
                           </select>
                       </div>
                       <button onClick={handleCreateUser} className="w-full py-3 bg-brand-primary text-white font-bold rounded-xl mt-4">Conferma Creazione</button>

@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Customer, User, Opportunity, CommodityDetails, ExtractedBill, Property } from '../types';
 import * as API from '../services/mockApi';
 import { Container } from './ui/Layouts';
-import { User as UserIcon, Building2, Search, MapPin, Calendar, Zap, Flame, Home, Plus, X, UploadCloud, Loader2, ArrowUpRight, Edit, Save, Trash2, Users, History, PiggyBank, TrendingDown, Settings, Smartphone, Leaf, Car, AlertCircle, ArrowLeftRight, ArrowRight } from 'lucide-react';
+import { User as UserIcon, Building2, Search, MapPin, Calendar, Zap, Flame, Home, Plus, X, UploadCloud, Loader2, ArrowUpRight, Edit, Save, Trash2, Users, History, PiggyBank, TrendingDown, Settings, Smartphone, Leaf, Car, AlertCircle, ArrowLeftRight, ArrowRight, Camera, FileText, Wand2, GitMerge } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface Props {
@@ -12,13 +12,16 @@ interface Props {
 
 const ConsumerTab: React.FC<Props> = ({ user }) => {
   const [families, setFamilies] = useState<Record<string, Customer[]>>({});
+  const [flatCustomers, setFlatCustomers] = useState<Customer[]>([]); // Useful for merge search
   const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false); // New state for modal actions
   const [search, setSearch] = useState('');
   const [expandedFamilyId, setExpandedFamilyId] = useState<string | null>(null);
 
   // Upload State
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   
   // Ambiguous Property State for Upload
   const [ambiguousState, setAmbiguousState] = useState<{
@@ -36,26 +39,48 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
 
   // Modals
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const [editingProperty, setEditingProperty] = useState<{ customer: Customer, property: Partial<Property> } | null>(null); // NEW
+  const [editingProperty, setEditingProperty] = useState<{ customer: Customer, property: Partial<Property> } | null>(null);
+  
+  // Merge Modal State
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeTargetId, setMergeTargetId] = useState<string>('');
+  const [mergeSourceId, setMergeSourceId] = useState<string>('');
+  const [mergeMode, setMergeMode] = useState<'MERGE' | 'LINK'>('LINK'); // Default to Link family
 
   const fetchFamilies = () => {
     setLoading(true);
-    API.get_families(user.agency_id).then(async (data) => {
-        setFamilies(data);
-        setLoading(false);
-    });
+    API.get_families(user.agency_id)
+        .then(async (data) => {
+            setFamilies(data);
+            const flat: Customer[] = [];
+            Object.values(data).forEach(arr => flat.push(...arr));
+            setFlatCustomers(flat);
+        })
+        .catch(err => console.error("Error fetching families:", err))
+        .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     fetchFamilies();
   }, [user.agency_id]);
 
-  const handleBillUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setIsUploading(true);
-      try {
-        const file = e.target.files[0];
-        const result = await API.analyze_bill(file, user);
+  const handleFileSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files.length > 0) {
+          const newFiles = Array.from(e.target.files);
+          setSelectedFiles(prev => [...prev, ...newFiles]);
+      }
+  };
+
+  const removeFile = (index: number) => {
+      setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAnalyze = async () => {
+    if (selectedFiles.length === 0) return;
+    
+    setIsUploading(true);
+    try {
+        const result = await API.analyze_bill(selectedFiles, user);
         
         if (result.status === 'CONFLICT_EXISTING_OWNER') {
             setConflictState({
@@ -80,16 +105,15 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
         // Success Path
         await fetchFamilies();
         setShowUploadModal(false);
+        setSelectedFiles([]);
         const name = result.customer_data!.last_name || result.customer_data!.company_name;
         alert(`Analisi completata! Cliente ${name} aggiornato/creato.`);
         setSearch(name || '');
-      } catch (err) {
+    } catch (err) {
         console.error(err);
-        alert("Errore durante l'analisi del documento.");
-      } finally {
+        alert("Errore durante l'analisi dei documenti.");
+    } finally {
         setIsUploading(false);
-        e.target.value = ''; 
-      }
     }
   };
 
@@ -167,6 +191,67 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
       fetchFamilies();
   };
 
+  // DELETE ACTIONS
+  const handleDeleteCustomer = async (id: string, name: string) => {
+      if (confirm(`Sei sicuro di voler eliminare definitivamente il cliente ${name}?`)) {
+          setLoading(true);
+          await API.delete_customer(id);
+          await fetchFamilies();
+          setLoading(false);
+      }
+  };
+
+  const handleDeleteProperty = async (customerId: string, propertyId: string) => {
+      if (confirm("Sei sicuro di voler rimuovere questo immobile?")) {
+          setLoading(true);
+          await API.delete_property(customerId, propertyId);
+          await fetchFamilies();
+          setLoading(false);
+      }
+  };
+
+  // MERGE / LINK ACTIONS
+  const handleMerge = async () => {
+      if (!mergeTargetId || !mergeSourceId) return;
+      if (mergeTargetId === mergeSourceId) {
+          alert("Devi selezionare due clienti diversi.");
+          return;
+      }
+      
+      const targetName = flatCustomers.find(c => c.id === mergeTargetId)?.last_name;
+      const sourceName = flatCustomers.find(c => c.id === mergeSourceId)?.last_name;
+
+      setActionLoading(true); // Start specific loading
+
+      try {
+          if (mergeMode === 'MERGE') {
+              // MERGE MODE
+              if (confirm(`ATTENZIONE: Fusione Duplicati.\n\nIl cliente "${sourceName}" VERRÀ ELIMINATO e i suoi immobili passeranno a "${targetName}".\n\nConfermi?`)) {
+                  await API.merge_customers(mergeTargetId, mergeSourceId);
+                  alert("Fusione completata.");
+                  setShowMergeModal(false);
+                  setMergeTargetId('');
+                  setMergeSourceId('');
+                  await fetchFamilies();
+              }
+          } else {
+              // LINK MODE
+              // Removed native confirm to avoid blocking UI feel, action is safe/reversible
+              await API.link_to_family(mergeTargetId, mergeSourceId);
+              // alert("Famiglia creata con successo."); // Optional: remove alert for smoother flow
+              setShowMergeModal(false);
+              setMergeTargetId('');
+              setMergeSourceId('');
+              await fetchFamilies();
+          }
+      } catch (e) {
+          console.error(e);
+          alert("Si è verificato un errore durante l'operazione. Riprova.");
+      } finally {
+          setActionLoading(false);
+      }
+  };
+
   const filteredFamilies = (Object.entries(families) as [string, Customer[]][]).filter(([key, members]) => {
       const lowerSearch = search.toLowerCase();
       return members.some(m => 
@@ -179,18 +264,27 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
 
   return (
     <Container>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <div>
            <h2 className="text-2xl font-bold text-brand-primary">Nuclei Famigliari</h2>
            <p className="text-sm text-gray-500">Gestione Consumer</p>
         </div>
-        <button 
-          onClick={() => setShowUploadModal(true)}
-          className="bg-brand-primary hover:bg-brand-dark text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-transform hover:-translate-y-0.5"
-        >
-            <Plus className="w-5 h-5" />
-            <span className="hidden md:inline">Nuovo</span>
-        </button>
+        <div className="flex gap-2">
+            <button 
+                onClick={() => setShowMergeModal(true)}
+                className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-sm"
+            >
+                <GitMerge className="w-5 h-5" />
+                <span className="hidden md:inline">Unisci / Famiglia</span>
+            </button>
+            <button 
+            onClick={() => { setShowUploadModal(true); setSelectedFiles([]); }}
+            className="bg-brand-primary hover:bg-brand-dark text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-transform hover:-translate-y-0.5"
+            >
+                <Plus className="w-5 h-5" />
+                <span>Nuovo</span>
+            </button>
+        </div>
       </div>
 
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 sticky top-20 z-20">
@@ -232,12 +326,13 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
                {isExpanded && (
                    <div className="bg-gray-50 border-t border-gray-100 p-4 space-y-4">
                        {members.map(member => (
-                           <div key={member.id} className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+                           <div key={member.id} className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm relative group">
                                <div className="flex justify-between items-start mb-4 border-b pb-2">
                                    <div className="flex items-center gap-2">
                                        <UserIcon className="w-4 h-4 text-gray-400" />
                                        <span className="font-bold text-gray-800">{member.first_name} {member.last_name}</span>
                                        <span className="text-xs text-gray-400 font-mono ml-2">{member.fiscal_code}</span>
+                                       {member.is_family_head && <span className="text-[10px] bg-teal-100 text-teal-800 px-2 rounded-full">CAPOFAMIGLIA</span>}
                                    </div>
                                    <div className="flex gap-2">
                                       <button 
@@ -247,6 +342,7 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
                                           <Plus className="w-3 h-3"/> Casa
                                       </button>
                                       <button className="text-xs text-blue-600 font-bold hover:underline" onClick={() => setEditingCustomer({...member})}>Edit</button>
+                                      <button className="text-xs text-red-500 font-bold hover:underline ml-2" onClick={() => handleDeleteCustomer(member.id, `${member.first_name} ${member.last_name}`)}>Elimina</button>
                                    </div>
                                </div>
                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
@@ -261,8 +357,12 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
                                                 {prop.is_resident && <span className="bg-green-100 text-green-700 px-1 rounded ml-auto">Residenza</span>}
                                                 {prop.status === 'SOLD' && <span className="bg-red-100 text-red-700 px-1 rounded ml-auto">VENDUTA</span>}
                                             </div>
-                                            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100">
+                                            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 flex gap-1">
                                                 <Edit className="w-3 h-3 text-gray-500 hover:text-brand-primary" />
+                                                <Trash2 
+                                                    className="w-3 h-3 text-gray-500 hover:text-red-500" 
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteProperty(member.id, prop.id); }}
+                                                />
                                             </div>
                                        </div>
                                    ))}
@@ -277,125 +377,82 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
         </div>
       )}
 
-      {/* Upload Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-                <div className="bg-brand-primary p-4 flex justify-between items-center text-white">
-                    <h3 className="font-bold text-lg">Carica Documento</h3>
-                    <button onClick={() => setShowUploadModal(false)}><X className="w-5 h-5" /></button>
-                </div>
-                <div className="p-6">
-                    <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-brand-accent transition-colors bg-gray-50 relative group">
-                        <input type="file" accept="image/*,application/pdf" onChange={handleBillUpload} disabled={isUploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                        <div className="flex flex-col items-center gap-2 pointer-events-none">
-                            {isUploading ? <Loader2 className="w-10 h-10 text-brand-accent animate-spin" /> : <UploadCloud className="w-10 h-10 text-gray-400" />}
-                            <span className="text-gray-600 font-medium">Bolletta o Carta d'Identità</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-      )}
-
-      {/* EDIT MODAL */}
-      {editingCustomer && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-                <div className="bg-brand-primary p-4 flex justify-between items-center text-white">
-                    <h3 className="font-bold text-lg">Modifica Persona</h3>
-                    <button onClick={() => setEditingCustomer(null)}><X className="w-5 h-5" /></button>
-                </div>
-                <div className="p-6 grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome</label>
-                        <input className="w-full p-2 border rounded" value={editingCustomer.first_name} onChange={e => setEditingCustomer({...editingCustomer, first_name: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cognome</label>
-                        <input className="w-full p-2 border rounded" value={editingCustomer.last_name} onChange={e => setEditingCustomer({...editingCustomer, last_name: e.target.value})} />
-                    </div>
-                    <div className="col-span-2">
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Codice Fiscale</label>
-                        <input className="w-full p-2 border rounded font-mono bg-gray-50" readOnly value={editingCustomer.fiscal_code} />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Telefono</label>
-                        <input className="w-full p-2 border rounded" value={editingCustomer.phone || ''} onChange={e => setEditingCustomer({...editingCustomer, phone: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email</label>
-                        <input className="w-full p-2 border rounded" value={editingCustomer.email || ''} onChange={e => setEditingCustomer({...editingCustomer, email: e.target.value})} />
-                    </div>
-                </div>
-                <div className="p-4 bg-gray-50 border-t flex justify-end gap-2">
-                    <button onClick={() => setEditingCustomer(null)} className="px-4 py-2 text-gray-600 font-bold">Annulla</button>
-                    <button onClick={handleSaveCustomer} className="px-4 py-2 bg-brand-primary text-white font-bold rounded">Salva Modifiche</button>
-                </div>
-            </div>
-        </div>
-      )}
-
-      {/* EDIT PROPERTY MODAL */}
-      {editingProperty && (
+      {/* MERGE MODAL */}
+      {showMergeModal && (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
                   <div className="bg-brand-primary p-4 text-white flex justify-between items-center">
                       <h3 className="font-bold text-lg flex items-center gap-2">
-                          <Home className="w-5 h-5" />
-                          {editingProperty.property.id ? 'Modifica Immobile' : 'Nuovo Immobile'}
+                          <GitMerge className="w-5 h-5" />
+                          Gestione Famiglie & Duplicati
                       </h3>
-                      <button onClick={() => setEditingProperty(null)}><X className="w-5 h-5"/></button>
+                      <button onClick={() => setShowMergeModal(false)}><X className="w-5 h-5"/></button>
                   </div>
                   <div className="p-6 space-y-4">
-                      <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Indirizzo</label>
-                          <input 
-                              className="w-full p-2 border rounded" 
-                              placeholder="Via Roma 1"
-                              value={editingProperty.property.address || ''} 
-                              onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, address: e.target.value}})} 
-                          />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                          <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Città</label>
-                              <input 
-                                  className="w-full p-2 border rounded" 
-                                  placeholder="Milano"
-                                  value={editingProperty.property.city || ''} 
-                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, city: e.target.value}})} 
-                              />
-                          </div>
-                          <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Stato</label>
-                              <select 
-                                  className="w-full p-2 border rounded"
-                                  value={editingProperty.property.status || 'ACTIVE'}
-                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, status: e.target.value as any}})}
-                              >
-                                  <option value="ACTIVE">Attivo</option>
-                                  <option value="SOLD">Venduto/Trasferito</option>
-                                  <option value="OBSOLETE">Obsoleto</option>
-                              </select>
-                          </div>
-                      </div>
                       
-                      <div className="flex items-center gap-2 bg-gray-50 p-3 rounded border border-gray-200">
-                          <input 
-                              type="checkbox" 
-                              id="is_resident"
-                              checked={editingProperty.property.is_resident || false}
-                              onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, is_resident: e.target.checked}})}
-                              className="w-4 h-4 text-brand-accent rounded"
-                          />
-                          <label htmlFor="is_resident" className="text-sm font-bold text-gray-700">Residenza Anagrafica</label>
+                      <div className="flex bg-gray-100 p-1 rounded-lg mb-4">
+                          <button 
+                              onClick={() => setMergeMode('LINK')}
+                              className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mergeMode === 'LINK' ? 'bg-white text-brand-primary shadow' : 'text-gray-500'}`}
+                          >
+                              Crea Famiglia
+                          </button>
+                          <button 
+                              onClick={() => setMergeMode('MERGE')}
+                              className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${mergeMode === 'MERGE' ? 'bg-white text-red-600 shadow' : 'text-gray-500'}`}
+                          >
+                              Fusione Duplicati
+                          </button>
                       </div>
 
-                      <div className="pt-4 flex justify-end gap-2 border-t">
-                          <button onClick={() => setEditingProperty(null)} className="px-4 py-2 text-gray-500 font-bold">Annulla</button>
-                          <button onClick={handleSaveProperty} className="px-4 py-2 bg-brand-primary text-white font-bold rounded flex items-center gap-2">
-                              <Save className="w-4 h-4"/> Salva Immobile
+                      <p className="text-sm text-gray-600 mb-4 bg-blue-50 p-3 rounded border border-blue-100">
+                          {mergeMode === 'LINK' 
+                              ? "Collega due persone (es. Marito e Moglie) nello stesso nucleo familiare. Entrambi rimarranno attivi."
+                              : "ATTENZIONE: Unisce due schede duplicate. Il cliente 'Duplicato' verrà ELIMINATO per sempre."
+                          }
+                      </p>
+                      
+                      <div>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                              {mergeMode === 'LINK' ? 'Capofamiglia (Principale)' : 'Cliente Corretto (Mantiene i dati)'}
+                          </label>
+                          <select 
+                              className="w-full p-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-brand-accent"
+                              value={mergeTargetId}
+                              onChange={(e) => setMergeTargetId(e.target.value)}
+                          >
+                              <option value="">-- Seleziona --</option>
+                              {flatCustomers.filter(c => c.id !== mergeSourceId).map(c => (
+                                  <option key={c.id} value={c.id}>{c.first_name} {c.last_name} ({c.fiscal_code})</option>
+                              ))}
+                          </select>
+                      </div>
+
+                      <div className="flex justify-center">
+                          <ArrowUpRight className="w-6 h-6 text-gray-300" />
+                      </div>
+
+                      <div>
+                          <label className={`block text-xs font-bold uppercase mb-1 ${mergeMode === 'MERGE' ? 'text-red-600' : 'text-gray-500'}`}>
+                              {mergeMode === 'LINK' ? 'Membro da aggiungere' : 'Duplicato da eliminare'}
+                          </label>
+                          <select 
+                              className={`w-full p-3 border-2 rounded-lg focus:outline-none ${mergeMode === 'MERGE' ? 'border-red-100 bg-red-50 focus:border-red-500' : 'border-gray-200 focus:border-brand-accent'}`}
+                              value={mergeSourceId}
+                              onChange={(e) => setMergeSourceId(e.target.value)}
+                          >
+                              <option value="">-- Seleziona --</option>
+                              {flatCustomers.filter(c => c.id !== mergeTargetId).map(c => (
+                                  <option key={c.id} value={c.id}>{c.first_name} {c.last_name} ({c.fiscal_code})</option>
+                              ))}
+                          </select>
+                      </div>
+
+                      <div className="pt-4 flex justify-end gap-2 border-t mt-4">
+                          <button onClick={() => setShowMergeModal(false)} className="px-4 py-2 text-gray-500 font-bold" disabled={actionLoading}>Annulla</button>
+                          <button onClick={handleMerge} disabled={!mergeTargetId || !mergeSourceId || actionLoading} className={`px-4 py-2 text-white font-bold rounded flex items-center gap-2 shadow-lg disabled:opacity-50 ${mergeMode === 'MERGE' ? 'bg-red-600 hover:bg-red-700' : 'bg-brand-primary hover:bg-brand-dark'}`}>
+                              {actionLoading ? <Loader2 className="w-4 h-4 animate-spin"/> : <GitMerge className="w-4 h-4"/>}
+                              {mergeMode === 'LINK' ? 'Crea Famiglia' : 'Esegui Fusione'}
                           </button>
                       </div>
                   </div>
@@ -403,7 +460,8 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
           </div>
       )}
 
-      {/* AMBIGUOUS & CONFLICT MODALS (Same as before) */}
+      {/* AMBIGUOUS & CONFLICT MODALS... (existing code) */}
+      {/* ... (Keep existing modals) ... */}
       {ambiguousState && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
@@ -442,7 +500,7 @@ const ConsumerTab: React.FC<Props> = ({ user }) => {
                   <button onClick={handleTransfer} className="w-full p-4 bg-brand-primary text-white rounded-lg font-bold flex items-center justify-between shadow-lg">
                       <span>Esegui Voltura al nuovo cliente</span><ArrowRight className="w-6 h-6" />
                   </button>
-                  <button onClick={() => setConflictState(null)} className="w-full mt-4 text-xs text-gray-400 underline">Annulla</button>
+                  <button onClick={() => setConflictState(null)} className="w-full mt-4 text-xs text-gray-400 underline">Annulla e correggi dati</button>
               </div>
            </div>
         </div>
