@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect } from 'react';
-import { Customer, User, Property, ExtractedBill } from '../types';
+import { Customer, User, Property, ExtractedBill, PropertyType, PropertyStatus, Commodity } from '../types';
 import * as API from '../services/mockApi';
 import { Container } from './ui/Layouts';
 import { Building2, Search, Zap, Flame, Home, UserCheck, Briefcase, Smartphone, Leaf, Car, Plus, X, UploadCloud, Loader2, AlertCircle, ArrowLeftRight, ArrowRight, Edit, Save, MapPin, Camera, FileText, Wand2, Trash2, GitMerge, ArrowUpRight } from 'lucide-react';
@@ -140,7 +139,7 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
           setConflictState(null);
           await fetchCustomers();
           setSearch(newCustomer.company_name!);
-          alert("Subentro aziendale completato!");
+          alert("Subentro aziendale completato! Vecchia sede disattivata.");
       } catch (e) {
           alert("Errore nel trasferimento sede.");
       } finally {
@@ -152,6 +151,46 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
       if (!editingProperty) return;
       const { customer, property } = editingProperty;
       
+      // MANUAL CONFLICT CHECK
+      const manualPod = property.electricity?.code;
+      const manualPdr = property.gas?.code;
+
+      if ((manualPod && manualPod.length > 5) || (manualPdr && manualPdr.length > 5)) {
+          // In Business Tab, we need to check ALL customers (Consumer + Business) for conflicts
+          // Assuming 'customers' state only has companies, we might need a broader check.
+          // For now, let's check against current loaded companies. In real app, API call is better.
+          for (const c of customers) {
+              if (c.id === customer.id) continue;
+              const conflictProp = c.properties.find(p => 
+                  p.status === 'ACTIVE' && (
+                      (manualPod && p.electricity?.code === manualPod) || 
+                      (manualPdr && p.gas?.code === manualPdr)
+                  )
+              );
+
+              if (conflictProp) {
+                  const dummyExtracted: ExtractedBill = {
+                      commodity: manualPod ? Commodity.LUCE : Commodity.GAS,
+                      pod_pdr: (manualPod || manualPdr)!,
+                      consumption: 0, consumption_f1:0, consumption_f2:0, consumption_f3:0,
+                      confidence_map: {},
+                      client_name: customer.company_name,
+                      fiscal_code: customer.fiscal_code,
+                      address: property.address,
+                      city: property.city
+                  };
+
+                  setConflictState({
+                      extractedData: dummyExtracted,
+                      conflictOwner: c,
+                      conflictProperty: conflictProp
+                  });
+                  setEditingProperty(null); 
+                  return;
+              }
+          }
+      }
+
       let updatedProps = [...customer.properties];
       if (property.id) {
           updatedProps = updatedProps.map(p => p.id === property.id ? { ...p, ...property } as Property : p);
@@ -161,7 +200,8 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
               status: 'ACTIVE',
               address: property.address || '',
               city: property.city || '',
-              is_resident: false, // Usually false for businesses
+              is_resident: false, 
+              property_type: property.property_type || 'OFFICE',
               electricity: undefined,
               gas: undefined,
               ...property
@@ -298,7 +338,7 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
                                 <MapPin className="w-4 h-4" /> Sedi Operative
                             </h4>
                             <button 
-                                onClick={(e) => { e.stopPropagation(); setEditingProperty({ customer: cust, property: { status: 'ACTIVE' } }); }}
+                                onClick={(e) => { e.stopPropagation(); setEditingProperty({ customer: cust, property: { status: 'ACTIVE', property_type: 'OFFICE' } }); }}
                                 className="text-xs flex items-center gap-1 bg-white border border-gray-200 px-3 py-1 rounded-lg hover:bg-gray-100 text-brand-primary font-bold"
                             >
                                 <Plus className="w-3 h-3" /> Aggiungi Sede
@@ -306,13 +346,13 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
                         </div>
                         <div className="grid gap-2">
                             {cust.properties.map(prop => (
-                                <div key={prop.id} className={`bg-white p-3 rounded border flex justify-between items-center ${prop.status === 'SOLD' ? 'opacity-60 bg-gray-100' : ''}`}>
+                                <div key={prop.id} className={`bg-white p-3 rounded border flex justify-between items-center ${prop.status === 'SOLD' || prop.status === 'INACTIVE' ? 'opacity-60 bg-gray-100 border-dashed' : ''}`}>
                                     <div className="flex flex-col gap-1 w-full mr-4">
                                         <div className="flex items-center gap-3">
-                                            <Building2 className="w-5 h-5 text-gray-400" />
+                                            {prop.property_type === 'INDUSTRIAL' ? <Building2 className="w-5 h-5 text-gray-600" /> : <Briefcase className="w-5 h-5 text-blue-500" />}
                                             <div>
                                                 <div className="font-bold text-sm">{prop.address}</div>
-                                                <div className="text-xs text-gray-500">{prop.city}</div>
+                                                <div className="text-xs text-gray-500">{prop.city} {prop.property_type && `(${prop.property_type})`}</div>
                                             </div>
                                         </div>
                                         <div className="flex gap-2 ml-8 mt-1">
@@ -320,7 +360,8 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
                                             {prop.gas && <span className="text-[10px] font-mono bg-orange-100 text-orange-800 px-1.5 rounded border border-orange-200">PDR: {prop.gas.code}</span>}
                                         </div>
                                     </div>
-                                    <div className="flex gap-1">
+                                    <div className="flex gap-1 items-center">
+                                        {(prop.status === 'SOLD' || prop.status === 'INACTIVE') && <span className="text-[9px] bg-gray-200 px-1 rounded mr-2">STORICO</span>}
                                         <button 
                                             onClick={() => setEditingProperty({ customer: cust, property: prop })}
                                             className="p-2 text-gray-400 hover:text-brand-primary hover:bg-gray-100 rounded"
@@ -344,125 +385,47 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
         </div>
       )}
 
-      {/* Upload Modal */}
+      {/* UPLOAD MODAL */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-                <div className="bg-brand-primary p-4 flex justify-between items-center text-white">
-                    <h3 className="font-bold text-lg">Nuova Bolletta Business</h3>
-                    <button onClick={() => setShowUploadModal(false)}><X className="w-5 h-5" /></button>
-                </div>
-                <div className="p-6">
-                    <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-gray-50 relative group mb-4">
-                        <input 
-                            type="file" 
-                            accept="image/*,application/pdf"
-                            onChange={handleFileSelection}
-                            multiple
-                            disabled={isUploading}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                        />
-                        <div className="flex flex-col items-center gap-2 pointer-events-none">
-                            {isUploading ? (
-                                <Loader2 className="w-10 h-10 text-brand-accent animate-spin" />
-                            ) : (
-                                <UploadCloud className="w-10 h-10 text-gray-400" />
-                            )}
-                            <span className="text-gray-600 font-medium">Trascina o Carica</span>
-                            <span className="text-xs text-gray-400">(Supporto multi-selezione)</span>
-                        </div>
-                    </div>
-
-                    {selectedFiles.length > 0 && (
-                        <div className="mb-4">
-                            <h4 className="text-sm font-bold text-gray-700 mb-2">Documenti selezionati ({selectedFiles.length}):</h4>
-                            <div className="space-y-2 max-h-40 overflow-y-auto">
-                                {selectedFiles.map((file, idx) => (
-                                    <div key={idx} className="flex justify-between items-center p-2 bg-gray-50 rounded text-sm border border-gray-200">
-                                        <div className="flex items-center gap-2 truncate">
-                                            <FileText className="w-4 h-4 text-brand-primary"/>
-                                            <span className="truncate max-w-[200px]">{file.name}</span>
-                                        </div>
-                                        <button onClick={() => removeFile(idx)} className="text-red-500 hover:bg-red-100 p-1 rounded">
-                                            <X className="w-4 h-4"/>
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <button 
-                        onClick={handleAnalyze}
-                        disabled={selectedFiles.length === 0 || isUploading}
-                        className="w-full py-3 bg-brand-primary disabled:bg-gray-300 text-white font-bold rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all"
-                    >
-                        {isUploading ? (
-                            <>
-                                <Loader2 className="w-5 h-5 animate-spin" /> Analisi con IA in corso...
-                            </>
-                        ) : (
-                            <>
-                                <Wand2 className="w-5 h-5" /> Avvia Analisi con IA
-                            </>
-                        )}
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
-
-      {/* EDIT PROPERTY MODAL */}
-      {editingProperty && (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
                   <div className="bg-brand-primary p-4 text-white flex justify-between items-center">
                       <h3 className="font-bold text-lg flex items-center gap-2">
-                          <Building2 className="w-5 h-5" />
-                          {editingProperty.property.id ? 'Modifica Sede' : 'Nuova Sede'}
+                          <UploadCloud className="w-5 h-5" /> Carica Bolletta Aziendale
                       </h3>
-                      <button onClick={() => setEditingProperty(null)}><X className="w-5 h-5"/></button>
+                      <button onClick={() => setShowUploadModal(false)}><X className="w-5 h-5"/></button>
                   </div>
-                  <div className="p-6 space-y-4">
-                      <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Indirizzo Sede</label>
-                          <input 
-                              className="w-full p-2 border rounded" 
-                              placeholder="Via Roma 1"
-                              value={editingProperty.property.address || ''} 
-                              onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, address: e.target.value}})} 
-                          />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                          <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Città</label>
-                              <input 
-                                  className="w-full p-2 border rounded" 
-                                  placeholder="Milano"
-                                  value={editingProperty.property.city || ''} 
-                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, city: e.target.value}})} 
-                              />
-                          </div>
-                          <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Stato Sede</label>
-                              <select 
-                                  className="w-full p-2 border rounded"
-                                  value={editingProperty.property.status || 'ACTIVE'}
-                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, status: e.target.value as any}})}
-                              >
-                                  <option value="ACTIVE">Attiva</option>
-                                  <option value="SOLD">Chiusa/Trasferita</option>
-                                  <option value="OBSOLETE">Storico</option>
-                              </select>
+                  <div className="p-8 text-center">
+                      <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 hover:border-brand-accent transition-colors bg-gray-50 relative group mb-6">
+                          <input type="file" multiple accept="image/*,application/pdf" onChange={handleFileSelection} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                          <div className="flex flex-col items-center gap-2 pointer-events-none">
+                              <Camera className="w-10 h-10 text-gray-400 mb-2" />
+                              <span className="text-gray-600 font-medium">Trascina file o clicca per caricare</span>
                           </div>
                       </div>
 
-                      <div className="pt-4 flex justify-end gap-2 border-t">
-                          <button onClick={() => setEditingProperty(null)} className="px-4 py-2 text-gray-500 font-bold">Annulla</button>
-                          <button onClick={handleSaveProperty} className="px-4 py-2 bg-brand-primary text-white font-bold rounded flex items-center gap-2">
-                              <Save className="w-4 h-4"/> Salva Sede
-                          </button>
-                      </div>
+                      {selectedFiles.length > 0 && (
+                          <div className="mb-6 text-left">
+                              <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">File pronti:</h4>
+                              <div className="space-y-2">
+                                  {selectedFiles.map((f, i) => (
+                                      <div key={i} className="flex justify-between items-center text-sm bg-gray-100 p-2 rounded">
+                                          <span className="truncate">{f.name}</span>
+                                          <button onClick={() => removeFile(i)} className="text-red-500"><X className="w-4 h-4"/></button>
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      )}
+
+                      <button 
+                          disabled={selectedFiles.length === 0 || isUploading}
+                          onClick={handleAnalyze}
+                          className="w-full py-3 bg-brand-accent hover:bg-teal-500 text-brand-dark rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                          {isUploading ? <Loader2 className="w-5 h-5 animate-spin"/> : <Wand2 className="w-5 h-5"/>}
+                          Analizza e Aggiungi Azienda
+                      </button>
                   </div>
               </div>
           </div>
@@ -474,52 +437,53 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
                   <div className="bg-brand-primary p-4 text-white flex justify-between items-center">
                       <h3 className="font-bold text-lg flex items-center gap-2">
-                          <GitMerge className="w-5 h-5" />
-                          Unisci Duplicati (Fusione)
+                          <GitMerge className="w-5 h-5" /> Unisci Aziende Duplicate
                       </h3>
                       <button onClick={() => setShowMergeModal(false)}><X className="w-5 h-5"/></button>
                   </div>
-                  <div className="p-6 space-y-4">
-                      <p className="text-sm text-gray-600 mb-4">
-                          Questa operazione sposterà tutte le sedi e bollette dall' "Azienda Duplicata" all' "Azienda Principale", ed eliminerà il duplicato.
-                      </p>
-                      
-                      <div>
-                          <label className="block text-xs font-bold text-green-700 uppercase mb-1">1. Azienda Principale (Mantiene i dati)</label>
-                          <select 
-                              className="w-full p-3 border-2 border-green-100 bg-green-50 rounded-lg focus:outline-none focus:border-green-500"
-                              value={mergeTargetId}
-                              onChange={(e) => setMergeTargetId(e.target.value)}
-                          >
-                              <option value="">-- Seleziona --</option>
-                              {customers.filter(c => c.id !== mergeSourceId).map(c => (
-                                  <option key={c.id} value={c.id}>{c.company_name} ({c.fiscal_code})</option>
-                              ))}
-                          </select>
+                  <div className="p-6">
+                      <div className="bg-yellow-50 border border-yellow-200 p-3 rounded text-sm text-yellow-800 mb-4">
+                          Attenzione: Questa operazione unirà due aziende in una sola. Tutte le sedi verranno spostate sull'azienda "Target".
                       </div>
 
-                      <div className="flex justify-center">
-                          <ArrowUpRight className="w-6 h-6 text-gray-300" />
+                      <div className="space-y-4">
+                          <div>
+                              <label className="block text-xs font-bold text-green-700 uppercase mb-1">1. Azienda da MANTENERE (Target)</label>
+                              <select 
+                                  className="w-full p-2 border-2 border-green-100 rounded bg-green-50"
+                                  value={mergeTargetId}
+                                  onChange={e => setMergeTargetId(e.target.value)}
+                              >
+                                  <option value="">-- Seleziona --</option>
+                                  {customers.map(c => (
+                                      <option key={c.id} value={c.id}>{c.company_name} ({c.fiscal_code})</option>
+                                  ))}
+                              </select>
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-red-700 uppercase mb-1">2. Azienda da ELIMINARE (Sorgente)</label>
+                              <select 
+                                  className="w-full p-2 border-2 border-red-100 rounded bg-red-50"
+                                  value={mergeSourceId}
+                                  onChange={e => setMergeSourceId(e.target.value)}
+                              >
+                                  <option value="">-- Seleziona --</option>
+                                  {customers.filter(c => c.id !== mergeTargetId).map(c => (
+                                      <option key={c.id} value={c.id}>{c.company_name} ({c.fiscal_code})</option>
+                                  ))}
+                              </select>
+                          </div>
                       </div>
 
-                      <div>
-                          <label className="block text-xs font-bold text-red-700 uppercase mb-1">2. Azienda Duplicata (Verrà eliminata)</label>
-                          <select 
-                              className="w-full p-3 border-2 border-red-100 bg-red-50 rounded-lg focus:outline-none focus:border-red-500"
-                              value={mergeSourceId}
-                              onChange={(e) => setMergeSourceId(e.target.value)}
-                          >
-                              <option value="">-- Seleziona --</option>
-                              {customers.filter(c => c.id !== mergeTargetId).map(c => (
-                                  <option key={c.id} value={c.id}>{c.company_name} ({c.fiscal_code})</option>
-                              ))}
-                          </select>
-                      </div>
-
-                      <div className="pt-4 flex justify-end gap-2 border-t mt-4">
+                      <div className="pt-6 flex justify-end gap-2">
                           <button onClick={() => setShowMergeModal(false)} className="px-4 py-2 text-gray-500 font-bold">Annulla</button>
-                          <button onClick={handleMerge} disabled={!mergeTargetId || !mergeSourceId} className="px-4 py-2 bg-brand-primary disabled:bg-gray-300 text-white font-bold rounded flex items-center gap-2 shadow-lg">
-                              <GitMerge className="w-4 h-4"/> Esegui Unione
+                          <button 
+                              disabled={!mergeTargetId || !mergeSourceId || loading}
+                              onClick={handleMerge} 
+                              className="px-4 py-2 bg-brand-primary text-white font-bold rounded flex items-center gap-2 shadow-lg disabled:opacity-50"
+                          >
+                              {loading ? <Loader2 className="w-4 h-4 animate-spin"/> : <GitMerge className="w-4 h-4"/>} 
+                              Unisci Definitivamente
                           </button>
                       </div>
                   </div>
@@ -532,21 +496,205 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
               <div className="bg-brand-primary p-5 text-white">
-                  <h3 className="text-xl font-bold flex items-center gap-2"><AlertCircle className="w-6 h-6" /> Sede esistente?</h3>
+                  <h3 className="text-xl font-bold flex items-center gap-2">
+                     <AlertCircle className="w-6 h-6 text-brand-highlight" />
+                     Seleziona Sede Operativa
+                  </h3>
+                  <p className="text-sm text-gray-300 mt-1">
+                      L'azienda esiste già, ma questo POD/PDR non è associato a nessuna sede conosciuta.
+                  </p>
               </div>
               <div className="p-6">
-                  <div className="space-y-3 mb-6">
+                  <h4 className="font-bold text-gray-700 mb-3">Sedi esistenti:</h4>
+                  <div className="space-y-3 mb-6 max-h-60 overflow-y-auto">
                       {ambiguousState.existingProperties.map(prop => (
-                          <div key={prop.id} onClick={() => handlePropertySelection(prop.id)} className="p-3 border rounded-lg hover:border-brand-accent cursor-pointer">
-                              <div className="font-bold">{prop.address}</div>
+                          <div key={prop.id} onClick={() => handlePropertySelection(prop.id)} className="p-3 border rounded-lg hover:border-brand-accent hover:bg-teal-50 cursor-pointer transition-colors group">
+                              <div className="flex items-center gap-3">
+                                  <div className="bg-gray-100 p-2 rounded-full group-hover:bg-white"><Building2 className="w-5 h-5 text-gray-500 group-hover:text-brand-accent" /></div>
+                                  <div>
+                                      <div className="font-bold text-gray-800">{prop.address}</div>
+                                      <div className="text-xs text-gray-500">{prop.city}</div>
+                                  </div>
+                              </div>
                           </div>
                       ))}
+                      {ambiguousState.existingProperties.length === 0 && <div className="text-gray-400 italic text-sm text-center py-2">Nessuna sede registrata.</div>}
                   </div>
-                  <button onClick={() => handlePropertySelection('NEW')} className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 font-bold">+ Nuova Sede</button>
-                  <button onClick={() => setAmbiguousState(null)} className="w-full mt-4 text-xs text-gray-400 underline">Annulla</button>
+                  <div className="relative flex py-2 items-center">
+                      <div className="flex-grow border-t border-gray-200"></div><span className="flex-shrink-0 mx-4 text-gray-400 text-xs">OPPURE</span><div className="flex-grow border-t border-gray-200"></div>
+                  </div>
+                  <button onClick={() => handlePropertySelection('NEW')} className="w-full mt-2 p-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-brand-primary hover:bg-gray-50 text-gray-500 hover:text-brand-primary font-bold flex items-center justify-center gap-2 transition-all">
+                      <Plus className="w-5 h-5" /> Crea Nuova Sede: {ambiguousState.extractedData.address || 'Da Bolletta'}
+                  </button>
               </div>
            </div>
         </div>
+      )}
+
+      {/* EDIT PROPERTY MODAL */}
+      {editingProperty && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+                  <div className="bg-brand-primary p-4 text-white flex justify-between items-center sticky top-0 z-10">
+                      <h3 className="font-bold text-lg flex items-center gap-2">
+                          <Building2 className="w-5 h-5" />
+                          {editingProperty.property.id ? 'Gestione Sede' : 'Nuova Sede'}
+                      </h3>
+                      <button onClick={() => setEditingProperty(null)}><X className="w-5 h-5"/></button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="col-span-2">
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipologia Sede</label>
+                              <select 
+                                  className="w-full p-2 border rounded"
+                                  value={editingProperty.property.property_type || 'OFFICE'}
+                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, property_type: e.target.value as PropertyType}})}
+                              >
+                                  <option value="OFFICE">Ufficio / Studio / Negozio</option>
+                                  <option value="INDUSTRIAL">Fabbricato Industriale / Capannone</option>
+                                  <option value="RESIDENTIAL">Uso Promiscuo / Abitazione</option>
+                                  <option value="ANNEX">Magazzino / Deposito</option>
+                              </select>
+                          </div>
+                          <div className="col-span-2">
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Indirizzo Sede</label>
+                              <input 
+                                  className="w-full p-2 border rounded" 
+                                  placeholder="Via Roma 1"
+                                  value={editingProperty.property.address || ''} 
+                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, address: e.target.value}})} 
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Città</label>
+                              <input 
+                                  className="w-full p-2 border rounded" 
+                                  placeholder="Milano"
+                                  value={editingProperty.property.city || ''} 
+                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, city: e.target.value}})} 
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">CAP</label>
+                              <input 
+                                  className="w-full p-2 border rounded" 
+                                  placeholder="00000"
+                                  value={editingProperty.property.zip_code || ''} 
+                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, zip_code: e.target.value}})} 
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Stato Sede</label>
+                              <select 
+                                  className="w-full p-2 border rounded"
+                                  value={editingProperty.property.status || 'ACTIVE'}
+                                  onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, status: e.target.value as PropertyStatus}})}
+                              >
+                                  <option value="ACTIVE">Attiva</option>
+                                  <option value="INACTIVE">Chiusa / Storico</option>
+                                  <option value="SOLD">Trasferita / Voltura</option>
+                              </select>
+                          </div>
+                      </div>
+
+                      {/* Technical Section */}
+                      <div className="border-t border-gray-200 pt-4">
+                          <h4 className="text-sm font-bold text-gray-800 mb-3">Dati Tecnici Forniture</h4>
+                          
+                          <div className="bg-yellow-50 p-3 rounded border border-yellow-200 mb-3">
+                              <div className="flex justify-between items-center mb-2">
+                                  <span className="text-xs font-bold text-yellow-800 flex items-center gap-1"><Zap className="w-3 h-3"/> Luce Business</span>
+                                  <label className="flex items-center gap-1 text-xs">
+                                      <input 
+                                          type="checkbox" 
+                                          checked={!!editingProperty.property.electricity}
+                                          onChange={(e) => {
+                                              if (e.target.checked) {
+                                                  setEditingProperty({
+                                                      ...editingProperty, 
+                                                      property: { ...editingProperty.property, electricity: { code: '', supplier: '', status: 'ACTIVE', raw_material_cost: 0, fixed_fee_year: 0 } }
+                                                  });
+                                              } else {
+                                                  setEditingProperty({
+                                                      ...editingProperty, 
+                                                      property: { ...editingProperty.property, electricity: undefined }
+                                                  });
+                                              }
+                                          }}
+                                      /> Abilita
+                                  </label>
+                              </div>
+                              {editingProperty.property.electricity && (
+                                  <div className="grid grid-cols-2 gap-2">
+                                      <input 
+                                          placeholder="POD (IT...)" 
+                                          className="text-xs p-2 border rounded"
+                                          value={editingProperty.property.electricity.code}
+                                          onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, electricity: {...editingProperty.property.electricity!, code: e.target.value.toUpperCase()}}})}
+                                      />
+                                      <input 
+                                          placeholder="Fornitore" 
+                                          className="text-xs p-2 border rounded"
+                                          value={editingProperty.property.electricity.supplier}
+                                          onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, electricity: {...editingProperty.property.electricity!, supplier: e.target.value}}})}
+                                      />
+                                  </div>
+                              )}
+                          </div>
+
+                          <div className="bg-orange-50 p-3 rounded border border-orange-200">
+                              <div className="flex justify-between items-center mb-2">
+                                  <span className="text-xs font-bold text-orange-800 flex items-center gap-1"><Flame className="w-3 h-3"/> Gas Business</span>
+                                  <label className="flex items-center gap-1 text-xs">
+                                      <input 
+                                          type="checkbox" 
+                                          checked={!!editingProperty.property.gas}
+                                          onChange={(e) => {
+                                              if (e.target.checked) {
+                                                  setEditingProperty({
+                                                      ...editingProperty, 
+                                                      property: { ...editingProperty.property, gas: { code: '', supplier: '', status: 'ACTIVE', raw_material_cost: 0, fixed_fee_year: 0 } }
+                                                  });
+                                              } else {
+                                                  setEditingProperty({
+                                                      ...editingProperty, 
+                                                      property: { ...editingProperty.property, gas: undefined }
+                                                  });
+                                              }
+                                          }}
+                                      /> Abilita
+                                  </label>
+                              </div>
+                              {editingProperty.property.gas && (
+                                  <div className="grid grid-cols-2 gap-2">
+                                      <input 
+                                          placeholder="PDR (Numerico)" 
+                                          className="text-xs p-2 border rounded"
+                                          value={editingProperty.property.gas.code}
+                                          onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, gas: {...editingProperty.property.gas!, code: e.target.value}}})}
+                                      />
+                                      <input 
+                                          placeholder="Fornitore" 
+                                          className="text-xs p-2 border rounded"
+                                          value={editingProperty.property.gas.supplier}
+                                          onChange={e => setEditingProperty({...editingProperty, property: {...editingProperty.property, gas: {...editingProperty.property.gas!, supplier: e.target.value}}})}
+                                      />
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+
+                      <div className="pt-4 flex justify-end gap-2 border-t sticky bottom-0 bg-white">
+                          <button onClick={() => setEditingProperty(null)} className="px-4 py-2 text-gray-500 font-bold">Annulla</button>
+                          <button onClick={handleSaveProperty} className="px-4 py-2 bg-brand-primary text-white font-bold rounded flex items-center gap-2">
+                              <Save className="w-4 h-4"/> Salva Sede
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
       )}
 
       {/* CONFLICT MODAL (VOLTURA AZIENDALE) */}
@@ -563,8 +711,10 @@ const BusinessTab: React.FC<Props> = ({ user }) => {
                       <p className="text-sm text-gray-600 font-mono mb-2">{conflictState.conflictOwner.fiscal_code}</p>
                       <p className="text-xs text-gray-500">Indirizzo: {conflictState.conflictProperty.address}</p>
                   </div>
+                  <p className="text-sm text-gray-600 mb-4">Eseguire <strong>Subentro Aziendale</strong>? La vecchia sede verrà disattivata.</p>
+                  
                   <button onClick={handleTransfer} className="w-full p-4 bg-brand-primary text-white rounded-lg font-bold flex items-center justify-between shadow-lg">
-                      <span>Esegui Subentro Aziendale</span><ArrowRight className="w-6 h-6" />
+                      <span>Conferma Subentro</span><ArrowRight className="w-6 h-6" />
                   </button>
                   <button onClick={() => setConflictState(null)} className="w-full mt-4 text-xs text-gray-400 underline">Annulla</button>
               </div>

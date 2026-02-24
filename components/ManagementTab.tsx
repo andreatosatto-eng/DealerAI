@@ -6,8 +6,9 @@ import { Container } from './ui/Layouts';
 import { 
     Plus, Building2, Users, Shield, UserPlus, Trash2, Edit, Save, X, Loader2, 
     CheckCircle2, Ban, Globe, CreditCard, History, Database, Download, Upload, 
-    AlertTriangle, Terminal, Search, MapPin
+    AlertTriangle, Terminal, Search, MapPin, Share2
 } from 'lucide-react';
+import { syncCustomerToHighLevel } from '../services/highLevelService';
 
 interface Props {
   user: User;
@@ -17,12 +18,16 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
   const isSuperAdmin = user.role === 'SUPER_ADMIN';
   const isAgencyAdmin = user.role === 'AGENCY_ADMIN';
 
-  const [activeTab, setActiveTab] = useState<'AGENCIES' | 'BRANCHES' | 'USERS' | 'DATABASE' | 'AUDIT'>(isSuperAdmin ? 'AGENCIES' : 'USERS');
+  const [activeTab, setActiveTab] = useState<'AGENCIES' | 'BRANCHES' | 'USERS' | 'DATABASE' | 'AUDIT' | 'INTEGRATIONS'>(isSuperAdmin ? 'AGENCIES' : 'USERS');
   
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // HighLevel Sync State
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   
   // Create Agency Form
   const [showAgencyModal, setShowAgencyModal] = useState(false);
@@ -124,6 +129,34 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
       a.click();
   };
 
+  const handleHighLevelSync = async () => {
+    if (!confirm("Vuoi sincronizzare tutti i clienti di questa agenzia con HighLevel?")) return;
+    
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+        // Fetch all customers for current agency
+        const customers = await API.get_customers(user.agency_id);
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const customer of customers) {
+            try {
+                await syncCustomerToHighLevel(customer);
+                successCount++;
+            } catch (e) {
+                console.error(`Failed to sync customer ${customer.id}`, e);
+                failCount++;
+            }
+        }
+        setSyncResult(`Sincronizzazione completata: ${successCount} successi, ${failCount} errori.`);
+    } catch (e) {
+        setSyncResult("Errore critico durante la sincronizzazione.");
+    } finally {
+        setSyncing(false);
+    }
+  };
+
   const myAgency = agencies.find(a => a.id === user.agency_id);
   const availableBranches = isSuperAdmin 
      ? (newUser.agency_id ? agencies.find(a => a.id === newUser.agency_id)?.branches || [] : [])
@@ -177,6 +210,12 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'DATABASE' ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
             <Database className="w-4 h-4"/> Dati
+        </button>
+        <button 
+            onClick={() => setActiveTab('INTEGRATIONS')}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'INTEGRATIONS' ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+            <Share2 className="w-4 h-4"/> Integrazioni
         </button>
       </div>
 
@@ -365,6 +404,63 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                             </div>
                         </div>
                       )}
+                  </div>
+              </div>
+          )}
+
+          {/* 5. INTEGRATIONS */}
+          {activeTab === 'INTEGRATIONS' && (
+              <div className="p-6">
+                  <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2 mb-6">
+                    <Share2 className="w-5 h-5 text-brand-accent"/> Integrazioni Esterne
+                  </h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex items-center gap-4 mb-4">
+                              <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl">HL</div>
+                              <div>
+                                  <h4 className="font-bold text-gray-800 text-lg">HighLevel CRM</h4>
+                                  <p className="text-sm text-gray-500">Sincronizzazione contatti e lead</p>
+                              </div>
+                          </div>
+                          
+                          <div className="bg-gray-50 p-4 rounded-lg text-sm text-gray-600 mb-4 border border-gray-100">
+                              <p className="mb-2">Stato: <span className="font-bold text-green-600">Connesso (API v1)</span></p>
+                              <p>Sincronizza l'intera anagrafica clienti verso la tua Location HighLevel configurata.</p>
+                          </div>
+
+                          {syncResult && (
+                              <div className={`mb-4 p-3 rounded text-sm font-bold ${syncResult.includes('errori') ? 'bg-yellow-50 text-yellow-700' : 'bg-green-50 text-green-700'}`}>
+                                  {syncResult}
+                              </div>
+                          )}
+
+                          <button 
+                              onClick={handleHighLevelSync} 
+                              disabled={syncing}
+                              className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                              {syncing ? <Loader2 className="w-5 h-5 animate-spin"/> : <Share2 className="w-5 h-5"/>}
+                              {syncing ? 'Sincronizzazione in corso...' : 'Avvia Sync Manuale'}
+                          </button>
+                      </div>
+
+                      {/* Placeholder for MCP Server Info */}
+                      <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow opacity-60">
+                          <div className="flex items-center gap-4 mb-4">
+                              <div className="w-12 h-12 bg-purple-600 rounded-lg flex items-center justify-center text-white font-bold"><Terminal className="w-6 h-6"/></div>
+                              <div>
+                                  <h4 className="font-bold text-gray-800 text-lg">MCP Server</h4>
+                                  <p className="text-sm text-gray-500">Model Context Protocol</p>
+                              </div>
+                          </div>
+                          <div className="bg-gray-50 p-4 rounded-lg text-sm text-gray-600 mb-4 border border-gray-100">
+                              <p>Endpoint attivo per agenti AI esterni.</p>
+                              <code className="block mt-2 bg-gray-200 p-2 rounded text-xs">/api/mcp/tools</code>
+                          </div>
+                          <button disabled className="w-full py-3 bg-gray-200 text-gray-400 font-bold rounded-xl cursor-not-allowed">Configurazione (Presto disponibile)</button>
+                      </div>
                   </div>
               </div>
           )}

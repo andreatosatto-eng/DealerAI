@@ -143,11 +143,13 @@ export interface Vehicle {
   insurance_expiry?: string;
 }
 
-export type PropertyStatus = 'ACTIVE' | 'SOLD' | 'OBSOLETE';
+export type PropertyStatus = 'ACTIVE' | 'INACTIVE' | 'SOLD' | 'OBSOLETE';
+export type PropertyType = 'RESIDENTIAL' | 'ANNEX' | 'OFFICE' | 'INDUSTRIAL' | 'OTHER';
 
 export interface Property {
   id: string;
   name?: string; 
+  property_type?: PropertyType; // Added Type
   status: PropertyStatus; 
   address: string;
   city: string;

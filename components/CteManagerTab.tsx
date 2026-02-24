@@ -315,33 +315,104 @@ const CteManagerTab: React.FC<Props> = ({ user }) => {
         </div>
       )}
 
-      {/* Edit Modal Overlay (Same as before but filtered for brevity if needed) */}
-      {/* Keeping previous edit logic */}
+      {/* Edit Modal Overlay */}
       {editingCte && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
-             {/* ... (Existing Edit Modal Content, no logic changes needed here for now) ... */}
-             <div className="bg-brand-primary p-4 flex justify-between items-center text-white">
-              <h3 className="font-bold text-lg">Modifica CTE</h3>
-              <button onClick={() => setEditingCte(null)}><X className="w-5 h-5" /></button>
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+             <div className="bg-brand-primary p-4 flex justify-between items-center text-white shrink-0">
+               <h3 className="font-bold text-lg flex items-center gap-2">
+                   <Pencil className="w-5 h-5" /> Modifica Offerta CTE
+               </h3>
+               <button onClick={() => setEditingCte(null)}><X className="w-5 h-5" /></button>
+             </div>
+            
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              
+              <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Offerta</label>
+                      <input 
+                          className="w-full p-2 border rounded font-bold text-gray-800"
+                          value={editingCte.offer_name}
+                          onChange={e => setEditingCte({...editingCte, offer_name: e.target.value})}
+                      />
+                  </div>
+                  <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Codice Offerta</label>
+                      <input 
+                          className="w-full p-2 border rounded font-mono text-sm"
+                          value={editingCte.offer_code}
+                          onChange={e => setEditingCte({...editingCte, offer_code: e.target.value})}
+                      />
+                  </div>
+                  <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Scadenza</label>
+                      <input 
+                          type="date" 
+                          className="w-full p-2 border rounded"
+                          value={editingCte.valid_until.split('T')[0]}
+                          onChange={e => setEditingCte({...editingCte, valid_until: e.target.value})}
+                      />
+                  </div>
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded border border-gray-200">
+                  <h4 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-brand-accent"/> Condizioni Economiche
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                      <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Quota Fissa (€/anno)</label>
+                          <input 
+                              type="number" step="0.01"
+                              className="w-full p-2 border rounded font-mono"
+                              value={editingCte.fixed_fee_value}
+                              onChange={e => setEditingCte({...editingCte, fixed_fee_value: parseFloat(e.target.value)})}
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Prezzo Monorario (F0)</label>
+                          <input 
+                              type="number" step="0.0001"
+                              className="w-full p-2 border rounded font-mono"
+                              value={editingCte.f0}
+                              onChange={e => setEditingCte({...editingCte, f0: parseFloat(e.target.value)})}
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Prezzo F1 (Peak)</label>
+                          <input 
+                              type="number" step="0.0001"
+                              className="w-full p-2 border rounded font-mono"
+                              value={editingCte.f1}
+                              onChange={e => setEditingCte({...editingCte, f1: parseFloat(e.target.value)})}
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Prezzo F23 (Off-Peak)</label>
+                          <input 
+                              type="number" step="0.0001"
+                              className="w-full p-2 border rounded font-mono"
+                              value={editingCte.f3} // Assuming f3 covers F2+F3 or similar logic
+                              onChange={e => setEditingCte({...editingCte, f3: parseFloat(e.target.value)})}
+                          />
+                      </div>
+                  </div>
+              </div>
+
+              <div className="bg-yellow-50 p-3 rounded border border-yellow-200 text-xs text-yellow-800 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5"/>
+                  <p>Modificando questi valori, cambierai i calcoli per tutte le analisi future basate su questa offerta. Le analisi passate non verranno ricalcolate.</p>
+              </div>
+
             </div>
             
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-              
-              {/* Common Fields */}
-              <div className="bg-yellow-50 p-4 rounded border border-yellow-200">
-                <label className="block text-xs font-bold text-yellow-800 uppercase mb-1">Scadenza</label>
-                <input type="date" value={editingCte.valid_until} onChange={e => setEditingCte({...editingCte, valid_until: e.target.value})} className="w-full p-2 border border-yellow-300 rounded" />
-                <p className="text-[10px] text-yellow-700 mt-1">Aggiorna questa data per rinnovare l'offerta.</p>
-              </div>
-              {/* ... (Rest of form identical to previous version) ... */}
-               <div className="p-4 bg-gray-50 border-t flex justify-end gap-2">
+            <div className="p-4 bg-gray-50 border-t flex justify-end gap-2 shrink-0">
                 <button onClick={() => setEditingCte(null)} className="px-4 py-2 text-gray-600 font-medium hover:bg-gray-200 rounded">Annulla</button>
-                <button onClick={handleSaveEdit} disabled={saving} className="px-4 py-2 bg-brand-primary text-white font-medium rounded hover:bg-brand-dark flex items-center gap-2">
+                <button onClick={handleSaveEdit} disabled={saving} className="px-4 py-2 bg-brand-primary text-white font-medium rounded hover:bg-brand-dark flex items-center gap-2 shadow-lg">
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    Salva
+                    Salva Modifiche
                 </button>
-                </div>
             </div>
           </div>
         </div>
