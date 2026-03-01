@@ -6,9 +6,9 @@ import { Container } from './ui/Layouts';
 import { 
     Plus, Building2, Users, Shield, UserPlus, Trash2, Edit, Save, X, Loader2, 
     CheckCircle2, Ban, Globe, CreditCard, History, Database, Download, Upload, 
-    AlertTriangle, Terminal, Search, MapPin, Share2
+    AlertTriangle, Terminal, Search, MapPin, Share2, ArrowDownCircle
 } from 'lucide-react';
-import { syncCustomerToHighLevel } from '../services/highLevelService';
+import { syncCustomerToHighLevel, importContactsFromHighLevel } from '../services/highLevelService';
 
 interface Props {
   user: User;
@@ -28,6 +28,11 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
   // HighLevel Sync State
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  
+  // HighLevel Import State
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const [showImportConfirm, setShowImportConfirm] = useState(false);
   
   // Create Agency Form
   const [showAgencyModal, setShowAgencyModal] = useState(false);
@@ -154,6 +159,28 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
         setSyncResult("Errore critico durante la sincronizzazione.");
     } finally {
         setSyncing(false);
+    }
+  };
+
+  const handleHighLevelImport = () => {
+    setShowImportConfirm(true);
+  };
+
+  const executeImport = async () => {
+    setShowImportConfirm(false);
+    console.log("Starting import process...");
+    setImporting(true);
+    setImportResult(null);
+    try {
+        console.log("Calling importContactsFromHighLevel...");
+        const result = await importContactsFromHighLevel(user.agency_id);
+        console.log("Import result:", result);
+        setImportResult(`Import completato: ${result.success} processati, ${result.failed} errori.`);
+    } catch (e: any) {
+        console.error("Import failed in component:", e);
+        setImportResult(`Errore: ${e.response?.data?.error || e.message || "Errore sconosciuto"}`);
+    } finally {
+        setImporting(false);
     }
   };
 
@@ -436,14 +463,31 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                               </div>
                           )}
 
-                          <button 
-                              onClick={handleHighLevelSync} 
-                              disabled={syncing}
-                              className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                          >
-                              {syncing ? <Loader2 className="w-5 h-5 animate-spin"/> : <Share2 className="w-5 h-5"/>}
-                              {syncing ? 'Sincronizzazione in corso...' : 'Avvia Sync Manuale'}
-                          </button>
+                          {importResult && (
+                              <div className={`mb-4 p-3 rounded text-sm font-bold ${importResult.includes('errori') ? 'bg-yellow-50 text-yellow-700' : 'bg-green-50 text-green-700'}`}>
+                                  {importResult}
+                              </div>
+                          )}
+
+                          <div className="flex gap-3">
+                              <button 
+                                  onClick={handleHighLevelSync} 
+                                  disabled={syncing || importing}
+                                  className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                              >
+                                  {syncing ? <Loader2 className="w-5 h-5 animate-spin"/> : <Share2 className="w-5 h-5"/>}
+                                  {syncing ? 'Invio...' : 'Export to GHL'}
+                              </button>
+                              
+                              <button 
+                                  onClick={handleHighLevelImport} 
+                                  disabled={syncing || importing}
+                                  className="flex-1 py-3 bg-white border-2 border-blue-600 text-blue-600 font-bold rounded-xl shadow-lg hover:bg-blue-50 disabled:opacity-50 flex items-center justify-center gap-2"
+                              >
+                                  {importing ? <Loader2 className="w-5 h-5 animate-spin"/> : <ArrowDownCircle className="w-5 h-5"/>}
+                                  {importing ? 'Ricezione...' : 'Import from GHL'}
+                              </button>
+                          </div>
                       </div>
 
                       {/* Placeholder for MCP Server Info */}
@@ -563,6 +607,31 @@ const ManagementTab: React.FC<Props> = ({ user }) => {
                           </select>
                       </div>
                       <button onClick={handleCreateUser} className="w-full py-3 bg-brand-primary text-white font-bold rounded-xl mt-4">Conferma Creazione</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {showImportConfirm && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md animate-in zoom-in-95">
+                  <div className="flex justify-between items-center mb-4 pb-2 border-b">
+                      <h3 className="font-bold text-xl flex items-center gap-2"><ArrowDownCircle className="w-6 h-6 text-blue-600"/> Importa da HighLevel</h3>
+                      <button onClick={() => setShowImportConfirm(false)}><X className="w-6 h-6"/></button>
+                  </div>
+                  <div className="space-y-4">
+                      <div className="bg-blue-50 p-4 rounded-xl text-blue-800 text-sm">
+                          <p className="font-bold mb-2">Stai per importare i contatti da HighLevel.</p>
+                          <ul className="list-disc list-inside space-y-1">
+                              <li>Verranno scaricati i contatti dalla Location configurata.</li>
+                              <li>I contatti esistenti (stessa email) verranno aggiornati.</li>
+                              <li>I nuovi contatti verranno creati come clienti.</li>
+                          </ul>
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                          <button onClick={() => setShowImportConfirm(false)} className="flex-1 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl">Annulla</button>
+                          <button onClick={executeImport} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700">Conferma Import</button>
+                      </div>
                   </div>
               </div>
           </div>

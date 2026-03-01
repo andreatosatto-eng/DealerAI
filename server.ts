@@ -57,6 +57,36 @@ async function startServer() {
     }
   });
 
+  // HighLevel Proxy - GET Contacts
+  app.get('/api/highlevel/contacts', async (req, res) => {
+    console.log("Server: GET /api/highlevel/contacts called");
+    const apiKey = process.env.HIGHLEVEL_API_KEY;
+    
+    if (!apiKey) {
+      console.error("Server: HIGHLEVEL_API_KEY is missing");
+      return res.status(500).json({ error: 'HighLevel API Key not configured' });
+    }
+
+    try {
+      console.log("Server: Fetching from HighLevel API...");
+      // Fetch contacts (limit 100 for MVP)
+      const response = await axios.get('https://rest.gohighlevel.com/v1/contacts/?limit=100', {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+      console.log("Server: HighLevel API success. Status:", response.status);
+
+      res.json(response.data);
+    } catch (error: any) {
+      console.error('HighLevel API Error (GET):', error.response?.data || error.message);
+      res.status(500).json({ 
+        error: 'Failed to fetch from HighLevel', 
+        details: error.response?.data || error.message 
+      });
+    }
+  });
+
   // MCP Server Placeholder (Model Context Protocol)
   // If the user meant this, we can expand it later.
   app.get('/api/mcp/tools', (req, res) => {

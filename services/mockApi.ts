@@ -345,7 +345,8 @@ export const update_customer = async (customer: Customer): Promise<Customer> => 
         const custRef = doc(db, 'customers', customer.id);
         // SANITIZE: Remove undefined values which break Firestore
         const cleanCustomer = sanitizeForFirestore(customer);
-        await setDoc(custRef, cleanCustomer); 
+        // Use merge: true to prevent overwriting/deleting fields that might be missing in the frontend object (e.g. family_id if undefined)
+        await setDoc(custRef, cleanCustomer, { merge: true }); 
     } catch(e) { 
         console.error("Update customer failed", e); 
         throw e;

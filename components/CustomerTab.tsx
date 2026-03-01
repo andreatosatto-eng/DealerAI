@@ -3,8 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { Customer, User, Segment, Opportunity, CommodityDetails, ExtractedBill, Property } from '../types';
 import * as API from '../services/mockApi';
 import { Container } from './ui/Layouts';
-import { User as UserIcon, Building2, Search, MapPin, Calendar, Wallet, Zap, Flame, Home, Plus, X, UploadCloud, Loader2, ArrowUpRight, Edit, Save, Calculator, Wand2, History, TrendingDown, PiggyBank, AlertCircle, ArrowLeftRight, ArrowRight, Trash2, FileText, Camera } from 'lucide-react';
+import { User as UserIcon, Building2, Search, MapPin, Calendar, Wallet, Zap, Flame, Home, Plus, X, UploadCloud, Loader2, ArrowUpRight, Edit, Save, Calculator, Wand2, History, TrendingDown, PiggyBank, AlertCircle, ArrowLeftRight, ArrowRight, Trash2, FileText, Camera, Share2, CheckCircle2, Wifi } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { syncCustomerToHighLevel } from '../services/highLevelService';
 
 interface Props {
   user: User;
@@ -43,6 +44,10 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
   const [editingProperty, setEditingProperty] = useState<{ customer: Customer, property: Partial<Property> } | null>(null); // NEW
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<{ type: 'LUCE' | 'GAS', details: CommodityDetails } | null>(null);
+
+  // GHL Sync State
+  const [ghlSyncCustomer, setGhlSyncCustomer] = useState<Customer | null>(null);
+  const [isSyncingGHL, setIsSyncingGHL] = useState(false);
 
   const fetchCustomers = () => {
     setLoading(true);
@@ -106,7 +111,9 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
       setShowUploadModal(false);
       setSelectedFiles([]);
       setSearch(result.customer_data!.fiscal_code);
-      alert(`Analisi completata! Cliente: ${result.customer_data!.last_name || result.customer_data!.company_name}`);
+      
+      // Prompt for GHL Sync instead of simple alert
+      setGhlSyncCustomer(result.customer_data!);
     } catch (err) {
       console.error(err);
       alert("Errore durante l'analisi dei documenti.");
@@ -174,8 +181,27 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
   const handleSaveCustomer = async () => {
       if (!editingCustomer) return;
       await API.update_customer(editingCustomer);
+      
+      // Prompt for GHL Sync
+      setGhlSyncCustomer(editingCustomer);
+      
       setEditingCustomer(null);
       fetchCustomers();
+  };
+
+  const handleConfirmSync = async () => {
+      if (!ghlSyncCustomer) return;
+      setIsSyncingGHL(true);
+      try {
+          await syncCustomerToHighLevel(ghlSyncCustomer);
+          alert("Sincronizzazione HighLevel completata con successo!");
+          setGhlSyncCustomer(null);
+      } catch (e) {
+          console.error(e);
+          alert("Errore durante la sincronizzazione con HighLevel. Verifica la configurazione.");
+      } finally {
+          setIsSyncingGHL(false);
+      }
   };
 
   const handleSaveProperty = async () => {
@@ -348,7 +374,7 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                     {/* Electricity Section */}
                                     {prop.electricity ? (
                                         <div 
@@ -442,6 +468,43 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
                                     ) : (
                                         <div className="border border-dashed border-gray-200 rounded-lg p-3 flex items-center justify-center text-gray-400 text-sm italic">
                                             Dati Gas non presenti
+                                        </div>
+                                    {/* Connectivity Section */}
+                                    {prop.connectivity ? (
+                                        <div className="bg-blue-50 rounded-lg p-3 border border-blue-200 relative overflow-hidden group/card hover:border-blue-400 transition-colors">
+                                            <Wifi className="absolute top-2 right-2 w-12 h-12 text-blue-500/10" />
+                                            <div className="flex items-center justify-between mb-2">
+                                                <div className="flex items-center gap-2 text-blue-700 font-bold">
+                                                    <Wifi className="w-4 h-4" /> INTERNET
+                                                </div>
+                                                <span className="text-[10px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded font-bold">{prop.connectivity.technology}</span>
+                                            </div>
+                                            <div className="space-y-1 text-sm">
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-500 text-xs">Provider</span>
+                                                    <span className="font-bold text-gray-800">{prop.connectivity.provider}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-500 text-xs">Costo Mese</span>
+                                                    <span className="font-bold text-gray-800">{prop.connectivity.monthly_cost} €</span>
+                                                </div>
+                                                <div className="flex justify-between pt-2 mt-2 border-t border-blue-200">
+                                                    <div>
+                                                        <span className="text-[10px] uppercase text-gray-400 font-bold">Stato</span>
+                                                        <div className="font-bold text-gray-700">{prop.connectivity.status}</div>
+                                                    </div>
+                                                    {prop.connectivity.speed_download_mbps && (
+                                                        <div className="text-right">
+                                                            <span className="text-[10px] uppercase text-gray-400 font-bold">Velocità</span>
+                                                            <div className="font-bold text-gray-700">{prop.connectivity.speed_download_mbps} Mb</div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="border border-dashed border-gray-200 rounded-lg p-3 flex items-center justify-center text-gray-400 text-sm italic">
+                                            Dati Internet non presenti
                                         </div>
                                     )}
                                 </div>
@@ -754,6 +817,114 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
                           </div>
                       )}
 
+                          </div>
+                      )}
+
+                      <div className="border-t pt-4 mt-4">
+                        <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Wifi className="w-4 h-4"/> Connettività Internet</h4>
+                        
+                        {!editingProperty.property.connectivity ? (
+                            <button 
+                                onClick={() => setEditingProperty({
+                                    ...editingProperty, 
+                                    property: {
+                                        ...editingProperty.property, 
+                                        connectivity: {
+                                            provider: '',
+                                            status: 'ACTIVE',
+                                            technology: 'FTTC',
+                                            monthly_cost: 0
+                                        }
+                                    }
+                                })}
+                                className="text-sm text-blue-600 font-bold border border-blue-200 bg-blue-50 px-3 py-2 rounded-lg hover:bg-blue-100 w-full flex items-center justify-center gap-2"
+                            >
+                                <Plus className="w-4 h-4"/> Aggiungi Linea Internet
+                            </button>
+                        ) : (
+                            <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 space-y-3 relative">
+                                <button 
+                                    onClick={() => {
+                                        const { connectivity, ...rest } = editingProperty.property;
+                                        setEditingProperty({...editingProperty, property: rest as any});
+                                    }}
+                                    className="absolute top-2 right-2 text-red-400 hover:text-red-600"
+                                    title="Rimuovi Internet"
+                                >
+                                    <Trash2 className="w-4 h-4"/>
+                                </button>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Provider</label>
+                                    <input 
+                                        className="w-full p-2 border rounded bg-white" 
+                                        placeholder="Es. TIM, Vodafone..."
+                                        value={editingProperty.property.connectivity?.provider || ''} 
+                                        onChange={e => setEditingProperty({
+                                            ...editingProperty, 
+                                            property: {
+                                                ...editingProperty.property, 
+                                                connectivity: { ...editingProperty.property.connectivity!, provider: e.target.value }
+                                            }
+                                        })} 
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tecnologia</label>
+                                        <select 
+                                            className="w-full p-2 border rounded bg-white"
+                                            value={editingProperty.property.connectivity?.technology || 'FTTC'}
+                                            onChange={e => setEditingProperty({
+                                                ...editingProperty, 
+                                                property: {
+                                                    ...editingProperty.property, 
+                                                    connectivity: { ...editingProperty.property.connectivity!, technology: e.target.value as any }
+                                                }
+                                            })}
+                                        >
+                                            <option value="FTTH">FTTH (Fibra Pura)</option>
+                                            <option value="FTTC">FTTC (Misto Rame)</option>
+                                            <option value="FWA">FWA (Radio)</option>
+                                            <option value="ADSL">ADSL</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Costo Mensile (€)</label>
+                                        <input 
+                                            type="number"
+                                            className="w-full p-2 border rounded bg-white" 
+                                            value={editingProperty.property.connectivity?.monthly_cost || 0} 
+                                            onChange={e => setEditingProperty({
+                                                ...editingProperty, 
+                                                property: {
+                                                    ...editingProperty.property, 
+                                                    connectivity: { ...editingProperty.property.connectivity!, monthly_cost: parseFloat(e.target.value) }
+                                                }
+                                            })} 
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Velocità Download (Mbps)</label>
+                                    <input 
+                                        type="number"
+                                        className="w-full p-2 border rounded bg-white" 
+                                        placeholder="Es. 1000"
+                                        value={editingProperty.property.connectivity?.speed_download_mbps || ''} 
+                                        onChange={e => setEditingProperty({
+                                            ...editingProperty, 
+                                            property: {
+                                                ...editingProperty.property, 
+                                                connectivity: { ...editingProperty.property.connectivity!, speed_download_mbps: parseFloat(e.target.value) }
+                                            }
+                                        })} 
+                                    />
+                                </div>
+                            </div>
+                        )}
+                      </div>
+
                       <div className="pt-4 flex justify-end gap-2 border-t">
                           <button onClick={() => setEditingProperty(null)} className="px-4 py-2 text-gray-500 font-bold">Annulla</button>
                           <button onClick={handleSaveProperty} className="px-4 py-2 bg-brand-primary text-white font-bold rounded flex items-center gap-2">
@@ -818,6 +989,63 @@ const CustomerTab: React.FC<Props> = ({ user }) => {
                                   <Line yAxisId="right" type="monotone" dataKey="cost" stroke="#82ca9d" name="Costo (€)" />
                               </LineChart>
                           </ResponsiveContainer>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* GHL Sync Modal */}
+      {ghlSyncCustomer && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+                  <div className="bg-blue-600 p-4 text-white flex justify-between items-center">
+                      <h3 className="font-bold text-lg flex items-center gap-2">
+                          <Share2 className="w-5 h-5" /> Sincronizzazione CRM
+                      </h3>
+                      <button onClick={() => setGhlSyncCustomer(null)}><X className="w-5 h-5"/></button>
+                  </div>
+                  <div className="p-6">
+                      <div className="text-center mb-6">
+                          <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                              <Share2 className="w-8 h-8" />
+                          </div>
+                          <h4 className="font-bold text-gray-800 text-lg">Aggiorna HighLevel</h4>
+                          <p className="text-sm text-gray-500 mt-1">
+                              Il cliente è stato salvato localmente. Vuoi sincronizzare i dati con HighLevel CRM?
+                          </p>
+                      </div>
+
+                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6 text-sm">
+                          <div className="flex justify-between mb-1">
+                              <span className="text-gray-500">Cliente:</span>
+                              <span className="font-bold">{ghlSyncCustomer.type === 'COMPANY' ? ghlSyncCustomer.company_name : `${ghlSyncCustomer.first_name} ${ghlSyncCustomer.last_name}`}</span>
+                          </div>
+                          <div className="flex justify-between mb-1">
+                              <span className="text-gray-500">Email:</span>
+                              <span className="font-mono">{ghlSyncCustomer.email || 'N/D'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                              <span className="text-gray-500">Telefono:</span>
+                              <span className="font-mono">{ghlSyncCustomer.phone || 'N/D'}</span>
+                          </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                          <button 
+                              onClick={() => setGhlSyncCustomer(null)} 
+                              className="flex-1 py-3 text-gray-600 font-bold hover:bg-gray-100 rounded-lg transition-colors"
+                          >
+                              Salta
+                          </button>
+                          <button 
+                              onClick={handleConfirmSync}
+                              disabled={isSyncingGHL}
+                              className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg flex items-center justify-center gap-2 transition-colors"
+                          >
+                              {isSyncingGHL ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                              {isSyncingGHL ? 'Sincronizzazione...' : 'Conferma Sync'}
+                          </button>
                       </div>
                   </div>
               </div>
